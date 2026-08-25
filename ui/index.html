@@ -60,11 +60,11 @@
           </div>
         </div>
 
-        <!-- Tab 3: 35 个技能库 -->
+        <!-- Tab 3: 43 个技能库 -->
         <div class="tab-panel" id="tab-skills" style="display: none;">
-          <div class="section-label">35 项工业级 Skills (点击一键填入)</div>
+          <div class="section-label">43 项工业级与循环工程 Skills (点击一键填入)</div>
           <div class="skills-search-box">
-            <input type="text" id="skills-search-input" placeholder="搜索技能, 例如 /tdd..." />
+            <input type="text" id="skills-search-input" placeholder="搜索技能, 例如 /loop-three 或 /tdd..." />
           </div>
           <div class="skills-list" id="skills-list"></div>
         </div>
@@ -95,6 +95,21 @@
         </div>
       </header>
 
+      <!-- 自动更新通知横条 (默认隐藏，检测到更新时优雅展示) -->
+      <div id="update-notification-banner" class="update-banner" style="display: none;">
+        <div class="update-banner-content">
+          <span class="update-icon">🚀</span>
+          <span class="update-text" id="update-banner-text">发现全新版本 v1.0.1</span>
+          <div class="update-banner-actions">
+            <button type="button" class="btn-update-now" id="btn-banner-update-now">⚡ 立即更新</button>
+            <button type="button" class="btn-update-dismiss" id="btn-banner-update-dismiss">✕</button>
+          </div>
+        </div>
+        <div id="update-progress-bar-wrap" class="update-progress-bar-wrap" style="display: none;">
+          <div id="update-progress-bar-fill" class="update-progress-bar-fill" style="width: 0%;"></div>
+        </div>
+      </div>
+
       <!-- 消息流视图 (flex: 1 独立平滑滚动) -->
       <section class="chat-stream" id="chat-stream"></section>
 
@@ -105,7 +120,7 @@
         <div class="composer-card">
           <div class="composer-toolbar">
             <div class="toolbar-left">
-              <span class="skill-indicator-pill">💬 35 Skills Armed</span>
+              <span class="skill-indicator-pill">💬 43 Skills Armed</span>
             </div>
             <div class="toolbar-right">
               <label class="btn-attach" for="file-uploader" title="添加文件或图片">📎 附加</label>
@@ -302,11 +317,11 @@
         <div class="about-hero">
           <div class="hero-logo-box"><div class="hero-logo">CX</div></div>
           <h4>Codex Desktop Harness</h4>
-          <p id="about-version">版本: v1.0.0 (Windows x64)</p>
+          <p id="about-version">版本: v1.0.1 (Windows x64)</p>
         </div>
-        <p class="about-desc">面向工业级开发者的全能 AI 编程工作台，支持原生多模态视觉、多模型 Provider 实时切换与 35 项工业级开发技能。</p>
+        <p class="about-desc">面向工业级开发者的全能 AI 编程工作台，支持原生多模态视觉、多模型 Provider 实时切换与 43 项工业级及循环工程技能。</p>
         <div class="about-skills-section">
-          <strong>内置 35 个全流程开发技能:</strong>
+          <strong>内置 43 个全流程开发与 Loop Engineering 技能:</strong>
           <div class="skills-tags-cloud" id="skills-tags-cloud"></div>
         </div>
                 <!-- GitHub 开源仓库卡片 -->

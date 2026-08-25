@@ -1,0 +1,66 @@
+{
+  "skill": "comprehension-gap",
+  "version": "0.1.0",
+  "source_book": "Loop Engineering 视频合集",
+  "darwin_compatible": true,
+  "test_cases": [
+    {
+      "id": "should-trigger-01",
+      "type": "should_trigger",
+      "prompt": "仓库里有很多 AI 生成的代码,但我看不懂,这正常吗?",
+      "expected_behavior": "应激活 comprehension-gap,解释认知差距现象并给出缓解策略",
+      "notes": "正面场景: 理解鸿沟"
+    },
+    {
+      "id": "should-trigger-02",
+      "type": "should_trigger",
+      "prompt": "loop 产出很多内容,但我不确定对不对,怎么办?",
+      "expected_behavior": "应激活 comprehension-gap,建议设置人类审查节点",
+      "notes": "正面场景: 产出不确定性"
+    },
+    {
+      "id": "should-trigger-03",
+      "type": "should_trigger",
+      "prompt": "团队 AI 使用风险警示,要向老板汇报",
+      "expected_behavior": "应激活 comprehension-gap,给出风险框架和缓解建议",
+      "notes": "正面场景: 风险汇报"
+    },
+    {
+      "id": "should-trigger-04",
+      "type": "should_trigger",
+      "prompt": "无人盯着的 loop 有什么风险?",
+      "expected_behavior": "应激活 comprehension-gap,解释 Ralph Loop 和认知差距的关联",
+      "notes": "正面场景: 监督缺失风险"
+    },
+    {
+      "id": "should-not-trigger-01",
+      "type": "should_not_trigger",
+      "prompt": "帮我写一个 loop 来自动生成代码",
+      "expected_behavior": "不应激活本 skill,因为这是构建需求,不是风险管理",
+      "notes": "诱饵: 构建场景"
+    },
+    {
+      "id": "should-not-trigger-02",
+      "type": "should_not_trigger",
+      "prompt": "这个 loop 的 stop condition 怎么设计?",
+      "expected_behavior": "不应激活本 skill,因为这是具体设计问题,不是风险管理",
+      "notes": "诱饵: 设计场景"
+    },
+    {
+      "id": "edge-01",
+      "type": "edge_case",
+      "prompt": "我的 loop 产出 100% 通过测试,还需要担心认知差距吗?",
+      "expected_behavior": "应激活并讨论: 测试通过≠理解,仍需定期审查产出逻辑",
+      "notes": "边界: 客观验证通过后的认知风险"
+    },
+    {
+      "id": "edge-02",
+      "type": "edge_case",
+      "prompt": "我想让 AI 帮我写文档,这有认知风险吗?",
+      "expected_behavior": "应激活并分析: 文档类产出认知风险较低,但仍需确保内容准确",
+      "notes": "边界: 低风险任务的认知管理"
+    }
+  ],
+  "minimum_pass_rate": 0.8,
+  "notes": "4 should_trigger + 2 should_not_trigger + 2 edge_case"
+}

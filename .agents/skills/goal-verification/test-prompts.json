@@ -1,0 +1,66 @@
+{
+  "skill": "goal-verification",
+  "version": "0.1.0",
+  "source_book": "Loop Engineering 视频合集",
+  "darwin_compatible": true,
+  "test_cases": [
+    {
+      "id": "should-trigger-01",
+      "type": "should_trigger",
+      "prompt": "我的 loop 产出的东西质量不稳定,有时好有时坏",
+      "expected_behavior": "应激活 goal-verification,检查验证环节是否可靠",
+      "notes": "正面场景: 产出质量不稳定"
+    },
+    {
+      "id": "should-trigger-02",
+      "type": "should_trigger",
+      "prompt": "怎么定义 loop 的'完成'? 我的 loop 停不下来",
+      "expected_behavior": "应激活 goal-verification,帮助将模糊目标转化为可验证的停止条件",
+      "notes": "正面场景: 无法停止的 loop"
+    },
+    {
+      "id": "should-trigger-03",
+      "type": "should_trigger",
+      "prompt": "帮我设计一个 loop 的目标,让它知道什么时候算做完",
+      "expected_behavior": "应激活 goal-verification,引导用户写出客观可验证的 goal",
+      "notes": "正面场景: 设计 goal"
+    },
+    {
+      "id": "should-trigger-04",
+      "type": "should_trigger",
+      "prompt": "agent 自评说做得很好,但实际产出很差,怎么办?",
+      "expected_behavior": "应激活 goal-verification,指出自产自检的问题并建议独立验证",
+      "notes": "正面场景: 自我评估失效"
+    },
+    {
+      "id": "should-not-trigger-01",
+      "type": "should_not_trigger",
+      "prompt": "帮我写一个 cron 脚本来定时备份",
+      "expected_behavior": "不应激活本 skill,因为这是简单自动化,不涉及验证设计",
+      "notes": "诱饵: 简单 cron 任务"
+    },
+    {
+      "id": "should-not-trigger-02",
+      "type": "should_not_trigger",
+      "prompt": "这个 loop 的 trigger 应该怎么设计?",
+      "expected_behavior": "不应激活本 skill,因为这是 trigger 设计问题,不是 goal/verification 设计",
+      "notes": "诱饵: 触发器设计,应进入 loop-three-elements"
+    },
+    {
+      "id": "edge-01",
+      "type": "edge_case",
+      "prompt": "我想让 AI 写一首诗,怎么判断写得好不好?",
+      "expected_behavior": "应激活并讨论: 诗歌是主观任务,无法客观验证,建议人类在环判断",
+      "notes": "边界: 创意任务的验证设计"
+    },
+    {
+      "id": "edge-02",
+      "type": "edge_case",
+      "prompt": "我的 loop 目标是'让代码更干净',这算可验证吗?",
+      "expected_behavior": "应激活并指出: '更干净'不可验证,应改为具体指标(如 lint 通过率、圈复杂度)",
+      "notes": "边界: 模糊目标的转化"
+    }
+  ],
+  "minimum_pass_rate": 0.8,
+  "notes": "4 should_trigger + 2 should_not_trigger + 2 edge_case"
+}

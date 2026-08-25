@@ -67,15 +67,16 @@ async function main() {
 ---
 
 ## 🌟 核心特性与更新 (Changelog)
+- 🚀 **基于 OpenAI Codex Harness** 现代化、原生多模态、零配置门槛工业级工作台
+- 🔄 **双轨全自动更新体系** (开机静默检测、优雅更新横条、实时流式下载进度与一键无缝重启升级)
+- ⚡ **内置 43 个全流程工业级与 Loop Engineering 技能** (含 Loop 三要素、价值判断、目标验证、5+1架构等)
+- 🧠 **内置前沿模型支持** (支持 GPT-5.4、GPT-5.5、GPT-5.3-Codex、Claude、DeepSeek 等)
+- 🛡️ **官方 Rust 内核状态适配器** (自适应探测系统与本地沙箱中的 Codex Core Daemon)
 - 🎨 **官方专业质感图标**：白底圆角矩形 + 经典墨黑 OpenAI / Codex 官方徽标
 - 💬 **响应式会话管理系统**：支持 + 新建会话、多会话历史切换、无损恢复与跨会话持久化
-- 🔍 **顶部自适应加宽模型选择器**：GPT-4o、Claude 3.7 Sonnet、DeepSeek Coder 完整清晰展示
-- 🚀 **基于 OpenAI Codex Harness** 原生多模态架构打造
-- ⚡ **内置 35 个全流程工业级 AI 编程技能** (Matt Pocock Skills 体系)
-- 🖼️ **原生多模态剪贴板图片拦截** (Ctrl+V) 与文件上传
+- 🖼️ **原生多模态剪贴板图片拦截** (Ctrl+V) 与文件上传，模型直接看图编程
 - 🎨 **内置 VS Code 4 款经典高对比度美学配色** 与即时热切换（彻底消除文字淹没）
 - 🛡️ **进程生命周期强守护** (0 端口残留)，静默无黑框运行
-- 🔄 **应用内全自动流式下载升级** (In-App Auto Updater)
 `;
 
   fs.writeFileSync(path.join(versionFolder, 'RELEASE_NOTES.md'), notes, 'utf8');

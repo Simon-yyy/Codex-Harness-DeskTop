@@ -10,7 +10,7 @@ let isDownloadingUpdate = false;
 let isQuitting = false;
 
 // ---------------------------------------------------------------------------
-// 自动初始化 35 个内置 Matt Pocock 技能
+// 自动初始化并热同步内置技能 (35 个 Matt Pocock 技能 + 8 个 Loop Engineering 技能)
 // ---------------------------------------------------------------------------
 function initBuiltinSkills() {
   try {
@@ -21,6 +21,7 @@ function initBuiltinSkills() {
     }
 
     const sourceSkillsDir = path.join(__dirname, ".agents", "skills");
+    let syncedCount = 0;
     if (fs.existsSync(sourceSkillsDir)) {
       const skills = fs.readdirSync(sourceSkillsDir);
       for (const s of skills) {
@@ -29,14 +30,19 @@ function initBuiltinSkills() {
         if (fs.statSync(srcPath).isDirectory()) {
           if (!fs.existsSync(destPath)) {
             fs.mkdirSync(destPath, { recursive: true });
-            const files = fs.readdirSync(srcPath);
-            for (const f of files) {
-              fs.copyFileSync(path.join(srcPath, f), path.join(destPath, f));
+          }
+          const files = fs.readdirSync(srcPath);
+          for (const f of files) {
+            const srcFile = path.join(srcPath, f);
+            const destFile = path.join(destPath, f);
+            if (!fs.existsSync(destFile) || fs.statSync(srcFile).size !== fs.statSync(destFile).size) {
+              fs.copyFileSync(srcFile, destFile);
             }
           }
+          syncedCount++;
         }
       }
-      console.log(`[codex-desktop] ✓ 自动部署 35 个技能到: ${targetDir}`);
+      console.log(`[codex-desktop] ✓ 自动增量热同步 ${syncedCount} 个技能到: ${targetDir}`);
     }
   } catch (err) {
     console.error("[codex-desktop] 部署技能库异常:", err);
@@ -181,6 +187,11 @@ function createWindow() {
   mainWindow.once("ready-to-show", () => {
     mainWindow.show();
     initBuiltinSkills();
+
+    // 启动 3 秒后在后台静默自动检查客户端更新
+    setTimeout(() => {
+      checkForUpdates(true);
+    }, 3000);
   });
 
   // 处理外部链接，防止在应用内跳出
@@ -290,17 +301,32 @@ function checkForUpdates(isSilent = false) {
 
         if (latestTag && latestTag !== currentVer) {
           const exeAsset = (data.assets || []).find((a) => a.name && a.name.endsWith(".exe"));
-          dialog.showMessageBox(mainWindow || null, {
-            type: "info",
-            title: "🎉 发现全新版本",
-            message: `发现 Codex Desktop 全新版本 v${latestTag}（当前版本: v${currentVer}）！\n\n更新说明：\n${data.body || "常规性能提升与体验优化。"}`,
-            buttons: ["⚡ 立即在应用内下载升级", "稍后再说"],
-            defaultId: 0
-          }).then(({ response }) => {
-            if (response === 0 && exeAsset && exeAsset.browser_download_url) {
-              startDownloadUpdate(exeAsset.browser_download_url, latestTag);
-            }
-          });
+          const downloadUrl = exeAsset ? exeAsset.browser_download_url : "";
+
+          // 向渲染进程广播更新就绪事件
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send("update-available", {
+              currentVersion: currentVer,
+              latestVersion: latestTag,
+              body: data.body || "常规性能提升与体验优化。",
+              downloadUrl: downloadUrl
+            });
+          }
+
+          // 如果是用户主动手动点击检查更新，弹出对话框
+          if (!isSilent) {
+            dialog.showMessageBox(mainWindow || null, {
+              type: "info",
+              title: "🎉 发现全新版本",
+              message: `发现 Codex Desktop 全新版本 v${latestTag}（当前版本: v${currentVer}）！\n\n更新说明：\n${data.body || "常规性能提升与体验优化。"}`,
+              buttons: ["⚡ 立即在应用内下载升级", "稍后再说"],
+              defaultId: 0
+            }).then(({ response }) => {
+              if (response === 0 && downloadUrl) {
+                startDownloadUpdate(downloadUrl, latestTag);
+              }
+            });
+          }
         } else if (!isSilent) {
           dialog.showMessageBox(mainWindow || null, {
             type: "info",
@@ -333,19 +359,24 @@ function checkForUpdates(isSilent = false) {
 }
 
 function startDownloadUpdate(assetUrl, newVersion) {
+  if (isDownloadingUpdate) return;
   isDownloadingUpdate = true;
   const tempDir = os.tmpdir();
   const installerPath = path.join(tempDir, `Codex-Desktop-Setup-${newVersion}.exe`);
 
-  dialog.showMessageBox(mainWindow || null, {
-    type: "info",
-    title: "⚡ 开始下载更新",
-    message: `已开始下载全新版本 v${newVersion} 安装包。\n下载完成后将自动启动安装升级，请稍候！`,
-    buttons: ["知道了"]
-  });
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("update-downloading", { version: newVersion });
+  }
 
-  downloadFile(assetUrl, installerPath).then(() => {
+  downloadFile(assetUrl, installerPath, (percent, downloadedBytes, totalBytes) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("update-progress", { percent, downloadedBytes, totalBytes });
+    }
+  }).then(() => {
     isDownloadingUpdate = false;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("update-downloaded", { version: newVersion, installerPath });
+    }
     dialog.showMessageBox(mainWindow || null, {
       type: "info",
       title: "🎉 下载完成",
@@ -366,6 +397,9 @@ function startDownloadUpdate(assetUrl, newVersion) {
     });
   }).catch((err) => {
     isDownloadingUpdate = false;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("update-error", { error: err.message });
+    }
     dialog.showMessageBox(mainWindow || null, {
       type: "error",
       title: "更新下载失败",
@@ -379,11 +413,19 @@ function startDownloadUpdate(assetUrl, newVersion) {
 // IPC Handlers
 // ---------------------------------------------------------------------------
 ipcMain.handle("get-app-info", () => {
+  let count = 43;
+  try {
+    const sourceSkillsDir = path.join(__dirname, ".agents", "skills");
+    if (fs.existsSync(sourceSkillsDir)) {
+      count = fs.readdirSync(sourceSkillsDir).filter((s) => fs.statSync(path.join(sourceSkillsDir, s)).isDirectory()).length;
+    }
+  } catch (e) {}
+
   return {
     version: app.getVersion(),
     name: "Codex Desktop",
-    harness: "OpenAI Codex Harness (Native Multimodal)",
-    skillsCount: 35,
+    harness: "OpenAI Codex Harness (Native Multimodal & Dual-Track Auto-Update)",
+    skillsCount: count,
     electronVersion: process.versions.electron,
     nodeVersion: process.versions.node,
     platform: process.platform,
@@ -394,6 +436,47 @@ ipcMain.handle("get-app-info", () => {
 ipcMain.handle("check-for-updates-manual", () => {
   checkForUpdates(false);
   return { success: true };
+});
+
+ipcMain.handle("start-download-update-action", (_event, { downloadUrl, version }) => {
+  if (downloadUrl && version) {
+    startDownloadUpdate(downloadUrl, version);
+    return { success: true };
+  }
+  return { success: false, error: "Missing downloadUrl or version" };
+});
+
+// 官方 Rust 内核与 CLI 状态检测适配器
+ipcMain.handle("detect-core-status", async () => {
+  return new Promise((resolve) => {
+    const { exec } = require("child_process");
+    exec("codex --version", (err, stdout) => {
+      if (!err && stdout) {
+        resolve({
+          installed: true,
+          version: stdout.trim(),
+          source: "system-path"
+        });
+      } else {
+        const userHome = os.homedir();
+        const customBin = path.join(userHome, ".codex", "bin", process.platform === "win32" ? "codex.exe" : "codex");
+        if (fs.existsSync(customBin)) {
+          resolve({
+            installed: true,
+            version: "local-daemon",
+            path: customBin,
+            source: "local-dir"
+          });
+        } else {
+          resolve({
+            installed: false,
+            version: "none",
+            latestAvailable: "rust-v0.149.1"
+          });
+        }
+      }
+    });
+  });
 });
 
 ipcMain.handle("open-external", async (_event, targetUrl) => {

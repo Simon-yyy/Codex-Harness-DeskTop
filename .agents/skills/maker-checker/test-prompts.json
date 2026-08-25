@@ -1,0 +1,66 @@
+{
+  "skill": "maker-checker",
+  "version": "0.1.0",
+  "source_book": "Loop Engineering 视频合集",
+  "darwin_compatible": true,
+  "test_cases": [
+    {
+      "id": "should-trigger-01",
+      "type": "should_trigger",
+      "prompt": "agent 自评说做得很好,但实际产出很差,怎么办?",
+      "expected_behavior": "应激活 maker-checker,指出自产自检的问题,建议引入独立 checker",
+      "notes": "正面场景: 自我评估失效"
+    },
+    {
+      "id": "should-trigger-02",
+      "type": "should_trigger",
+      "prompt": "怎么让一个 agent 审查另一个 agent 的产出?",
+      "expected_behavior": "应激活 maker-checker,给出 maker-checker 的设计步骤",
+      "notes": "正面场景: 设计独立审查"
+    },
+    {
+      "id": "should-trigger-03",
+      "type": "should_trigger",
+      "prompt": "我的 loop 产出质量不稳定,需要加个审查环节",
+      "expected_behavior": "应激活 maker-checker,建议在 loop 中加入独立 checker agent",
+      "notes": "正面场景: 提升产出质量"
+    },
+    {
+      "id": "should-trigger-04",
+      "type": "should_trigger",
+      "prompt": "团队想用 AI 做 code review,怎么设计?",
+      "expected_behavior": "应激活 maker-checker,给出 maker(写代码)+checker(审查)的分工设计",
+      "notes": "正面场景: 团队 code review 自动化"
+    },
+    {
+      "id": "should-not-trigger-01",
+      "type": "should_not_trigger",
+      "prompt": "帮我写一个测试来验证代码是否正确",
+      "expected_behavior": "不应激活本 skill,因为这是自动化测试,不是 agent 审查 agent",
+      "notes": "诱饵: 自动化测试,非 maker-checker"
+    },
+    {
+      "id": "should-not-trigger-02",
+      "type": "should_not_trigger",
+      "prompt": "这个 loop 的 goal 应该怎么定义?",
+      "expected_behavior": "不应激活本 skill,因为这是 goal 设计问题,不是验证分工",
+      "notes": "诱饵: goal 设计,应进入 goal-verification"
+    },
+    {
+      "id": "edge-01",
+      "type": "edge_case",
+      "prompt": "我的任务很简单,产出就几行文字,需要 checker 吗?",
+      "expected_behavior": "应激活并分析: 简单任务可能不需要,成本可能超过收益",
+      "notes": "边界: 简单任务是否需要独立审查"
+    },
+    {
+      "id": "edge-02",
+      "type": "edge_case",
+      "prompt": "可以用同一个 agent 先做再审吗? 这样省 token",
+      "expected_behavior": "应激活并解释: 可以但效果差,自产自检有盲点,建议至少用不同 prompt 角色分离",
+      "notes": "边界: 成本 vs 质量的权衡"
+    }
+  ],
+  "minimum_pass_rate": 0.8,
+  "notes": "4 should_trigger + 2 should_not_trigger + 2 edge_case"
+}

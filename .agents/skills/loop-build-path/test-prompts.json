@@ -1,0 +1,66 @@
+{
+  "skill": "loop-build-path",
+  "version": "0.1.0",
+  "source_book": "Loop Engineering 视频合集",
+  "darwin_compatible": true,
+  "test_cases": [
+    {
+      "id": "should-trigger-01",
+      "type": "should_trigger",
+      "prompt": "我想把每天手动做的事情自动化,从哪里开始?",
+      "expected_behavior": "应激活 loop-build-path,给出四步路径: 手动验证 → Skill → Trigger → Verification",
+      "notes": "正面场景: 入门构建 loop"
+    },
+    {
+      "id": "should-trigger-02",
+      "type": "should_trigger",
+      "prompt": "我的 cron job 已经跑很久了,怎么升级成真正的 loop?",
+      "expected_behavior": "应激活 loop-build-path,指出当前在 Step 3,引导加入验证+状态进入 Step 4",
+      "notes": "正面场景: 从自动化升级到 loop"
+    },
+    {
+      "id": "should-trigger-03",
+      "type": "should_trigger",
+      "prompt": "团队想推广 loop,给个入门指南吧",
+      "expected_behavior": "应激活 loop-build-path,给出渐进式构建路径作为培训材料",
+      "notes": "正面场景: 团队推广"
+    },
+    {
+      "id": "should-trigger-04",
+      "type": "should_trigger",
+      "prompt": "我做了一个 loop 但产出很差,是不是跳过了什么步骤?",
+      "expected_behavior": "应激活 loop-build-path,检查是否跳过了 Step 1(手动验证)",
+      "notes": "正面场景: 构建失败的诊断"
+    },
+    {
+      "id": "should-not-trigger-01",
+      "type": "should_not_trigger",
+      "prompt": "这个值不值得做 loop?",
+      "expected_behavior": "不应激活本 skill,因为这是决策问题,应进入 loop-worthiness-test",
+      "notes": "诱饵: 决策场景"
+    },
+    {
+      "id": "should-not-trigger-02",
+      "type": "should_not_trigger",
+      "prompt": "帮我设计 loop 的 trigger 和 stop condition",
+      "expected_behavior": "不应激活本 skill,因为这是结构设计,不是构建路径",
+      "notes": "诱饵: 设计场景,应进入 loop-three-elements"
+    },
+    {
+      "id": "edge-01",
+      "type": "edge_case",
+      "prompt": "我想直接跳到加验证,不想先手动跑一遍",
+      "expected_behavior": "应激活并解释为什么 Step 1 不可跳过: 如果手动都做不成,自动化只会放大失败",
+      "notes": "边界: 想跳过步骤"
+    },
+    {
+      "id": "edge-02",
+      "type": "edge_case",
+      "prompt": "我已经有一个 skill 了,怎么加定时触发?",
+      "expected_behavior": "应激活并定位到 Step 3,给出触发器添加指南",
+      "notes": "边界: 从中间步骤开始"
+    }
+  ],
+  "minimum_pass_rate": 0.8,
+  "notes": "4 should_trigger + 2 should_not_trigger + 2 edge_case"
+}

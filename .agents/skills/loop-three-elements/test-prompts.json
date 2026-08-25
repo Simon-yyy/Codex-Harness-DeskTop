@@ -1,0 +1,66 @@
+{
+  "skill": "loop-three-elements",
+  "version": "0.1.0",
+  "source_book": "Loop Engineering 视频合集",
+  "darwin_compatible": true,
+  "test_cases": [
+    {
+      "id": "should-trigger-01",
+      "type": "should_trigger",
+      "prompt": "我想设计一个每天自动检查服务器状态的 loop,应该怎么做?",
+      "expected_behavior": "应激活 loop-three-elements,引导用户定义 trigger(定时)、action(检查哪些指标)、stop condition(何时判定为正常/异常)",
+      "notes": "正面场景: 设计新 loop 的典型需求"
+    },
+    {
+      "id": "should-trigger-02",
+      "type": "should_trigger",
+      "prompt": "我的 loop 跑了三天还没停,怎么回事?",
+      "expected_behavior": "应激活 loop-three-elements,诊断 stop condition 是否缺失或过主观",
+      "notes": "正面场景: 诊断失效 loop"
+    },
+    {
+      "id": "should-trigger-03",
+      "type": "should_trigger",
+      "prompt": "什么是 loop 的最小结构? 我想教团队理解 loop",
+      "expected_behavior": "应激活 loop-three-elements,用 trigger-action-stop 三元组作为教学框架",
+      "notes": "正面场景: 向他人解释 loop"
+    },
+    {
+      "id": "should-trigger-04",
+      "type": "should_trigger",
+      "prompt": "帮我看看这个自动化脚本缺什么,它有时候不执行",
+      "expected_behavior": "应激活 loop-three-elements,检查 trigger 是否明确",
+      "notes": "正面场景: 诊断触发问题"
+    },
+    {
+      "id": "should-not-trigger-01",
+      "type": "should_not_trigger",
+      "prompt": "帮我写一个 Python 脚本来备份数据库",
+      "expected_behavior": "不应激活本 skill,因为这是单次脚本编写,不需要循环结构分析",
+      "notes": "诱饵: 单次任务,非循环场景"
+    },
+    {
+      "id": "should-not-trigger-02",
+      "type": "should_not_trigger",
+      "prompt": "这个 cron job 报错了,帮我看看哪里不对",
+      "expected_behavior": "不应激活本 skill,因为这是调试问题,不是设计或分析循环结构",
+      "notes": "诱饵: 调试场景,应进入具体技术排查"
+    },
+    {
+      "id": "edge-01",
+      "type": "edge_case",
+      "prompt": "我想让 AI 每天帮我写一篇日记,这算 loop 吗?",
+      "expected_behavior": "可以激活本 skill 分析三要素 (trigger=每天, action=写日记, stop=写完一篇),但应指出这只是简单自动化,不涉及验证-迭代环",
+      "notes": "边界: 有循环结构但无验证环,是否算真正的 loop"
+    },
+    {
+      "id": "edge-02",
+      "type": "edge_case",
+      "prompt": "我的 while 循环怎么写才能正确退出?",
+      "expected_behavior": "不应深入编程语法,但可以用三要素类比 (trigger=循环条件, action=循环体, stop=退出条件),然后引导到具体编程问题",
+      "notes": "边界: 编程循环 vs 本 skill 的 loop 概念"
+    }
+  ],
+  "minimum_pass_rate": 0.8,
+  "notes": "4 should_trigger + 2 should_not_trigger + 2 edge_case"
+}

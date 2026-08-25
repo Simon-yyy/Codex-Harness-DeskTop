@@ -1,0 +1,66 @@
+{
+  "skill": "loop-5plus1-architecture",
+  "version": "0.1.0",
+  "source_book": "Loop Engineering 视频合集",
+  "darwin_compatible": true,
+  "test_cases": [
+    {
+      "id": "should-trigger-01",
+      "type": "should_trigger",
+      "prompt": "我要设计一个完整的 AI 自动化系统,应该包含哪些部分?",
+      "expected_behavior": "应激活 loop-5plus1-architecture,给出 5+1 组件清单",
+      "notes": "正面场景: 设计完整系统"
+    },
+    {
+      "id": "should-trigger-02",
+      "type": "should_trigger",
+      "prompt": "我的 loop 系统缺什么组件? 现在只有 cron + 一个 agent",
+      "expected_behavior": "应激活并审计: 有心跳✅ 缺 Work Tree❌ 缺 Skill❌ 缺连接器❌ 缺子智能体❌ 缺脊柱❌",
+      "notes": "正面场景: 审计现有系统"
+    },
+    {
+      "id": "should-trigger-03",
+      "type": "should_trigger",
+      "prompt": "多个 loop 怎么协同工作?",
+      "expected_behavior": "应激活并解释共享记忆(脊柱)和信号机制",
+      "notes": "正面场景: 多 loop 协同"
+    },
+    {
+      "id": "should-trigger-04",
+      "type": "should_trigger",
+      "prompt": "向团队展示一个完整的 loop 系统长什么样",
+      "expected_behavior": "应激活并用 5+1 架构作为教学蓝图",
+      "notes": "正面场景: 教学演示"
+    },
+    {
+      "id": "should-not-trigger-01",
+      "type": "should_not_trigger",
+      "prompt": "帮我设计一个最小的 loop,只需要基本功能",
+      "expected_behavior": "不应激活本 skill,因为用户要的是最小可用,不是完整架构",
+      "notes": "诱饵: 最小 loop,应进入 loop-three-elements"
+    },
+    {
+      "id": "should-not-trigger-02",
+      "type": "should_not_trigger",
+      "prompt": "这个 loop 的 stop condition 怎么设计?",
+      "expected_behavior": "不应激活本 skill,因为这是具体设计问题,不是架构审计",
+      "notes": "诱饵: 具体设计,应进入 goal-verification"
+    },
+    {
+      "id": "edge-01",
+      "type": "edge_case",
+      "prompt": "我想审计一下我们的 CI/CD 系统,看它算不算一个 loop",
+      "expected_behavior": "应激活并用 5+1 框架分析: CI/CD 有心跳(触发器)✅ 有验证(测试)✅ 但可能缺子智能体分工❌",
+      "notes": "边界: 用 loop 框架分析非 loop 系统"
+    },
+    {
+      "id": "edge-02",
+      "type": "edge_case",
+      "prompt": "我的 loop 只有一个 agent,需要拆分吗?",
+      "expected_behavior": "应激活并分析: 如果产出需要审查,则应拆分为 maker-checker;如果不需要,单 agent 也可以",
+      "notes": "边界: 是否需要子智能体分工"
+    }
+  ],
+  "minimum_pass_rate": 0.8,
+  "notes": "4 should_trigger + 2 should_not_trigger + 2 edge_case"
+}

@@ -238,15 +238,15 @@ runTest("style.css: 侧边栏无硬编码深色渐变", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Seam 8: 35 个工业级技能部署与 YAML 校验
+// Seam 8: 43 个工业级与 Loop Engineering 技能部署与 YAML 校验
 // ═══════════════════════════════════════════════════════════════════════════
-console.log("\n═══ Seam 8: 35 个工业级技能部署与 YAML 校验 ═══");
+console.log("\n═══ Seam 8: 43 个工业级与 Loop Engineering 技能部署与 YAML 校验 ═══");
 
 const skillsDir = path.join(rootDir, ".agents", "skills");
 const skillDirs = fs.readdirSync(skillsDir).filter(f => fs.statSync(path.join(skillsDir, f)).isDirectory());
 
-runTest("35 个技能数量精确对齐", () => {
-  assert.strictEqual(skillDirs.length, 35);
+runTest("43 个技能数量精确对齐 (35项工程技能 + 8项循环工程技能)", () => {
+  assert.strictEqual(skillDirs.length, 43);
 });
 
 runTest("每个 Skill 包含有效 SKILL.md", () => {

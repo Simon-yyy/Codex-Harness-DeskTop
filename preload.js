@@ -162,6 +162,8 @@ function initWheelPenetration() {
 contextBridge.exposeInMainWorld("codexDesktop", {
   getAppInfo: () => ipcRenderer.invoke("get-app-info"),
   checkForUpdates: () => ipcRenderer.invoke("check-for-updates-manual"),
+  startDownloadUpdate: (payload) => ipcRenderer.invoke("start-download-update-action", payload),
+  detectCoreStatus: () => ipcRenderer.invoke("detect-core-status"),
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
   saveTempImage: (base64) => ipcRenderer.invoke("save-temp-image", base64),
   getThemes: () => ESCOOK_THEMES,
@@ -176,6 +178,18 @@ contextBridge.exposeInMainWorld("codexDesktop", {
   callLlmApi: (payload) => ipcRenderer.invoke('call-llm-api', payload),
   onMenuAction: (callback) => {
     ipcRenderer.on("menu-action", (_event, action) => callback(action));
+  },
+  onUpdateAvailable: (callback) => {
+    ipcRenderer.on("update-available", (_event, data) => callback(data));
+  },
+  onUpdateDownloading: (callback) => {
+    ipcRenderer.on("update-downloading", (_event, data) => callback(data));
+  },
+  onUpdateProgress: (callback) => {
+    ipcRenderer.on("update-progress", (_event, data) => callback(data));
+  },
+  onUpdateDownloaded: (callback) => {
+    ipcRenderer.on("update-downloaded", (_event, data) => callback(data));
   }
 });
 

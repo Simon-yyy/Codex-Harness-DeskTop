@@ -1,11 +1,11 @@
 // Codex Desktop Client - Full Production Core Application
 const PROVIDER_PRESETS = {
-  openai: { name: "OpenAI", baseUrl: "https://api.openai.com/v1", protocol: "openai", models: "gpt-4o, gpt-4o-mini, o1, o3-mini" },
+  openai: { name: "OpenAI", baseUrl: "https://api.openai.com/v1", protocol: "openai", models: "gpt-5.4, gpt-5.5, gpt-5.3-codex, gpt-4o, o1, o3-mini" },
   deepseek: { name: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", protocol: "openai", models: "deepseek-chat, deepseek-coder, deepseek-reasoner" },
   anthropic: { name: "Anthropic Claude", baseUrl: "https://api.anthropic.com/v1", protocol: "anthropic", models: "claude-3-7-sonnet, claude-opus-4-8, claude-opus-5" },
   ollama: { name: "Ollama (Local)", baseUrl: "http://127.0.0.1:11434", protocol: "ollama", models: "llama3.3, qwen2.5-coder, deepseek-r1:7b" },
-  agentrouter: { name: "AgentRouter", baseUrl: "https://ps.air-outer.com/v1", protocol: "openai", models: "gpt-5.6-sol, claude-opus-4-8, claude-opus-5" },
-  custom: { name: "自定义提供方", baseUrl: "https://ps.air-outer.com/v1", protocol: "openai", models: "gpt-5.6-sol, claude-opus-4-8" }
+  agentrouter: { name: "AgentRouter", baseUrl: "https://ps.air-outer.com/v1", protocol: "openai", models: "gpt-5.6-sol, gpt-5.4, gpt-5.5, claude-opus-4-8, claude-opus-5" },
+  custom: { name: "自定义提供方", baseUrl: "https://ps.air-outer.com/v1", protocol: "openai", models: "gpt-5.4, gpt-5.5, gpt-5.6-sol, claude-opus-4-8" }
 };
 
 const DEFAULT_SESSIONS = [
@@ -536,9 +536,20 @@ document.addEventListener("DOMContentLoaded", () => {
 
   
   // ==========================================
-  // 🛠️ 35 项工业级 Skills 系统与实时搜索过滤
+  // 🛠️ 43 项工业级与 Loop Engineering 技能系统
   // ==========================================
   const INDUSTRIAL_SKILLS = [
+    // --- Loop Engineering 8 大循环工程技能 ---
+    { name: "Loop 三要素 (Three Elements)", command: "/loop-three-elements", desc: "用 Trigger、Action、Stop Condition 设计与审计最小可工作循环系统" },
+    { name: "Loop 价值判断 (Worthiness Test)", command: "/loop-worthiness-test", desc: "基于高频重复、可容忍延迟与客观验证判断任务是否值得自动化" },
+    { name: "目标与验证 (Goal Verification)", command: "/goal-verification", desc: "把模糊需求转化为可客观验证的停止条件与 Hard Stop 兜底" },
+    { name: "Loop 渐进构建 (Build Path)", command: "/loop-build-path", desc: "从手动流程、半自动脚本到全自动 Agent 循环的四步构建路径" },
+    { name: "5+1 架构审计 (5+1 Architecture)", command: "/loop-5plus1-architecture", desc: "审计完备 Loop 系统架构：心跳、工作树、技能、连接器、子智能体 + 记忆" },
+    { name: "独立审查员 (Maker Checker)", command: "/maker-checker", desc: "设计 Maker-Checker 双智能体机制，杜绝 Agent 自产自检与宽容自评" },
+    { name: "三阶段演进 (Three Stage Evolution)", command: "/three-stage-evolution", desc: "评估团队与个人在工具使用、自动化协作和自主循环上的成熟度" },
+    { name: "认知风险管理 (Comprehension Gap)", command: "/comprehension-gap", desc: "识别和管理高度自动化带来的理解断层与代码失控风险" },
+
+    // --- Matt Pocock 35 项工业级工程技能 ---
     { name: "测试驱动开发 (TDD)", command: "/tdd", desc: "严格红-绿-重构循环，先编写失败测试再编写最小实现" },
     { name: "极限追问评审 (Grilling)", command: "/grill-me", desc: "对架构方案进行全方位极限施压与盲点深度排查" },
     { name: "长程目标执行 (Goal Loop)", command: "/goal", desc: "自主长程多步骤任务推进，不达终点誓不罢休" },
@@ -1386,6 +1397,81 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   btnCloseAbout.addEventListener("click", closeAllModals);
+
+  // ==========================================
+  // 🚀 客户端全自动更新与横条交互控制
+  // ==========================================
+  const updateBanner = document.getElementById("update-notification-banner");
+  const updateBannerText = document.getElementById("update-banner-text");
+  const btnBannerUpdateNow = document.getElementById("btn-banner-update-now");
+  const btnBannerUpdateDismiss = document.getElementById("btn-banner-update-dismiss");
+  const updateProgressWrap = document.getElementById("update-progress-bar-wrap");
+  const updateProgressFill = document.getElementById("update-progress-bar-fill");
+  let pendingUpdatePayload = null;
+
+  if (btnBannerUpdateDismiss && updateBanner) {
+    btnBannerUpdateDismiss.addEventListener("click", () => {
+      updateBanner.style.display = "none";
+    });
+  }
+
+  if (btnBannerUpdateNow) {
+    btnBannerUpdateNow.addEventListener("click", () => {
+      if (pendingUpdatePayload && window.codexDesktop && window.codexDesktop.startDownloadUpdate) {
+        btnBannerUpdateNow.disabled = true;
+        btnBannerUpdateNow.innerText = "⏳ 下载中...";
+        if (updateProgressWrap) updateProgressWrap.style.display = "block";
+        window.codexDesktop.startDownloadUpdate({
+          downloadUrl: pendingUpdatePayload.downloadUrl,
+          version: pendingUpdatePayload.latestVersion
+        });
+      }
+    });
+  }
+
+  if (window.codexDesktop) {
+    if (window.codexDesktop.onUpdateAvailable) {
+      window.codexDesktop.onUpdateAvailable((info) => {
+        pendingUpdatePayload = info;
+        if (updateBanner && updateBannerText) {
+          updateBannerText.innerHTML = `🎉 发现全新版本 <strong>v${escapeHtml(info.latestVersion)}</strong>！已就绪，可随时一键升级。`;
+          updateBanner.style.display = "flex";
+        }
+      });
+    }
+
+    if (window.codexDesktop.onUpdateDownloading) {
+      window.codexDesktop.onUpdateDownloading(() => {
+        if (updateProgressWrap) updateProgressWrap.style.display = "block";
+        if (btnBannerUpdateNow) {
+          btnBannerUpdateNow.disabled = true;
+          btnBannerUpdateNow.innerText = "⏳ 正在下载安装包...";
+        }
+      });
+    }
+
+    if (window.codexDesktop.onUpdateProgress) {
+      window.codexDesktop.onUpdateProgress((prog) => {
+        if (updateProgressFill) {
+          updateProgressFill.style.width = `${prog.percent}%`;
+        }
+        if (updateBannerText) {
+          updateBannerText.innerText = `正在下载更新包... ${prog.percent}%`;
+        }
+      });
+    }
+
+    if (window.codexDesktop.onUpdateDownloaded) {
+      window.codexDesktop.onUpdateDownloaded((res) => {
+        if (updateBannerText) {
+          updateBannerText.innerText = `✓ v${res.version} 下载完成，即将重启安装！`;
+        }
+        if (btnBannerUpdateNow) {
+          btnBannerUpdateNow.innerText = "✓ 立即安装";
+        }
+      });
+    }
+  }
 
   if (btnCheckUpdates) {
     btnCheckUpdates.addEventListener("click", () => {
