@@ -1,0 +1,8 @@
+node_modules/
+release/
+dist/
+.DS_Store
+*.log
+_smoke-userdata/
+*.bak
+_*.js

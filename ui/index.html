@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Codex Desktop - 旗舰 AI 编程工作台</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="workbench-layout">
+    <!-- 左侧一体化经典侧边栏 -->
+    <aside class="unified-sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-logo-icon">CX</div>
+        <div class="brand-text">
+          <h2>Codex Desktop</h2>
+          <span class="brand-sub">HARNESS v1.0</span>
+        </div>
+      </div>
+
+      <div class="sidebar-action-wrap">
+        <button class="btn-new-chat" id="btn-new-chat">
+          <span class="btn-icon">+</span> 新建会话
+        </button>
+      </div>
+
+      <!-- 侧边栏三大 Tab 胶囊切换 -->
+      <div class="sidebar-nav-tabs">
+        <button class="nav-tab active" data-tab="sessions">💬 会话</button>
+        <button class="nav-tab" data-tab="files">📁 文件</button>
+        <button class="nav-tab" data-tab="skills">🧠 技能</button>
+      </div>
+
+      <!-- 侧边栏滚动内容区 -->
+      <div class="sidebar-content-area">
+        <!-- Tab 1: 会话列表 -->
+        <div class="tab-panel active" id="tab-sessions">
+          <div class="section-label">近期会话</div>
+          <div class="session-list" id="session-list"></div>
+        </div>
+
+        <!-- Tab 2: 文件树 -->
+        <div class="tab-panel" id="tab-files" style="display: none;">
+          <div class="section-label">项目工作区</div>
+          <div class="file-tree" id="file-tree">
+            <div class="tree-item dir" title="点击折叠/展开">📁 ui/</div>
+            <div class="tree-sub">
+              <div class="tree-item" title="点击查看并注入引用">📄 index.html</div>
+              <div class="tree-item" title="点击查看并注入引用">📄 style.css</div>
+              <div class="tree-item" title="点击查看并注入引用">📄 app.js</div>
+            </div>
+            <div class="tree-item dir" title="点击折叠/展开">📁 assets/</div>
+            <div class="tree-sub">
+              <div class="tree-item" title="点击查看并注入引用">🖼️ icon.png</div>
+              <div class="tree-item" title="点击查看并注入引用">🖼️ icon.ico</div>
+            </div>
+            <div class="tree-item" title="点击查看并注入引用">📄 main.js</div>
+            <div class="tree-item" title="点击查看并注入引用">📄 preload.js</div>
+            <div class="tree-item" title="点击查看并注入引用">📄 package.json</div>
+          </div>
+        </div>
+
+        <!-- Tab 3: 35 个技能库 -->
+        <div class="tab-panel" id="tab-skills" style="display: none;">
+          <div class="section-label">35 项工业级 Skills (点击一键填入)</div>
+          <div class="skills-search-box">
+            <input type="text" id="skills-search-input" placeholder="搜索技能, 例如 /tdd..." />
+          </div>
+          <div class="skills-list" id="skills-list"></div>
+        </div>
+      </div>
+
+      <!-- 侧边栏底部操作区 (经典优雅悬浮无边框按钮) -->
+      <div class="sidebar-footer">
+        <button class="footer-item-btn" id="btn-open-settings" style="width: 100%; justify-content: flex-start; padding: 10px 12px; border-radius: 8px;">
+          <span class="footer-icon">⚙️</span>
+          <span class="footer-text">设置</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- 中间主工作台 (main-workbench 固定高并完美停靠底栏) -->
+    <main class="main-workbench">
+      <!-- 顶部 Header -->
+      <header class="workbench-header">
+        <div class="header-left">
+          <span class="workspace-pill">Codex Agent</span>
+          <span class="header-divider">/</span>
+          <span class="workspace-path" id="current-session-title-header">新会话</span>
+        </div>
+        <div class="header-right">
+          <button type="button" class="header-btn-subtle" id="btn-export-session" title="导出当前会话为 Markdown 文档">📤 导出 .md</button>
+          <select class="header-model-select" id="header-model-select" style="display: none;"><option value="gpt-5.6-sol">gpt-5.6-sol</option></select>
+          <button class="header-btn-subtle" id="btn-toggle-right-panel">预览面板</button>
+        </div>
+      </header>
+
+      <!-- 消息流视图 (flex: 1 独立平滑滚动) -->
+      <section class="chat-stream" id="chat-stream"></section>
+
+      <!-- 底部 Composer 输入区 (固定在视野底部) -->
+      <footer class="composer-container">
+        <div id="image-preview-bar" class="image-preview-bar" style="display: none;"></div>
+
+        <div class="composer-card">
+          <div class="composer-toolbar">
+            <div class="toolbar-left">
+              <span class="skill-indicator-pill">💬 35 Skills Armed</span>
+            </div>
+            <div class="toolbar-right">
+              <label class="btn-attach" for="file-uploader" title="添加文件或图片">📎 附加</label>
+              <input type="file" id="file-uploader" style="display: none;" multiple accept="image/*,.txt,.js,.ts,.py,.json,.md">
+            </div>
+          </div>
+
+          <textarea id="composer-input" placeholder="描述需求、架构或重构方案，或直接 Ctrl+V 粘贴图片进行多模态视觉分析..." rows="3"></textarea>
+
+          <div class="composer-footer">
+            <div class="composer-hints">
+              <span>Enter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴图片</span>
+            </div>
+            <div class="composer-actions-right" style="position: relative; display: flex; align-items: center; gap: 8px;">
+              <!-- DSH 风格模型选择浮层与触发胶囊 -->
+              <div class="dsh-model-picker-wrap" id="dsh-model-picker-wrap">
+                <button type="button" class="dsh-model-capsule-btn" id="btn-dsh-model-capsule" title="切换模型与提供方">
+                  <span class="dsh-capsule-name" id="dsh-current-model-label">gpt-5.6-sol</span>
+                  <span class="dsh-capsule-arrow">⌃</span>
+                </button>
+
+                <!-- 向上弹出的 DSH 风格高质感模型选择菜单 -->
+                <div class="dsh-model-popover" id="dsh-model-popover">
+                  <div class="dsh-popover-header">
+                    <span class="dsh-popover-title">模型选择</span>
+                    <span class="dsh-popover-badge" id="dsh-popover-prov-count">已配置提供方</span>
+                  </div>
+                  <div class="dsh-popover-list" id="dsh-popover-model-list">
+                    <!-- 动态注入模型项 -->
+                  </div>
+                </div>
+              </div>
+
+              <button type="button" class="btn-send dsh-send-circle-btn" id="btn-send" title="发送消息 (Enter)">
+                <span class="dsh-send-arrow">↑</span>
+              </button>
+            </div>
+          </div></div>
+      </footer>
+    </main>
+
+    <!-- 右侧代码与变更预览面板 -->
+    <aside class="workbench-right" id="right-panel" style="display: none;">
+      <div class="right-panel-header">
+        <div class="right-header-title">
+          <span class="panel-icon">📊</span> 变更预览 & 查看器
+        </div>
+        <button class="btn-close-subtle" id="btn-close-right-panel" title="关闭面板">✕</button>
+      </div>
+      <div class="right-panel-body">
+        <div class="diff-summary-card">
+          <div class="diff-header">
+            <span class="diff-tag mod">OVERVIEW</span>
+            <span class="diff-file">系统已准备就绪</span>
+          </div>
+          <pre class="diff-code"><code>// 点击左侧【文件】列表中的任一文件
+// 即可在此处实时查看文件源码并在输入框引用</code></pre>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- 模型服务商配置弹窗 -->
+  <!-- Settings Modal (Trae 风格工业级模型配置中心) -->
+  <!-- Settings Modal (纯粹专注的模型配置中心) -->
+  <div class="modal-backdrop" id="modal-settings" style="display: none;">
+    <div class="modal-dialog modal-lg pure-model-settings-dialog">
+      <!-- 顶部 Header -->
+      <div class="pure-modal-header">
+        <div>
+          <h3 class="pure-modal-title">模型配置</h3>
+          <p class="pure-modal-subtitle">填入各提供方的 API 密钥即可使用其模型。</p>
+        </div>
+        <button type="button" class="btn-dsh-close-icon" id="btn-close-settings">✕</button>
+      </div>
+
+      <!-- 主工作区：提供方卡片列表与双虚线按钮 -->
+      <div class="pure-modal-body">
+        <!-- 提供方卡片容器 -->
+        <div class="dsh-cards-container" id="dsh-provider-list">
+          <!-- 动态注入 Provider 卡片 -->
+        </div>
+
+        <!-- 底部两个虚线添加大按钮 -->
+        <div class="dsh-dashed-actions-grid">
+          <button type="button" class="btn-dsh-dashed-action" id="btn-dsh-add-preset">
+            <span class="dsh-plus-icon">+</span> 添加提供方
+          </button>
+          <button type="button" class="btn-dsh-dashed-action" id="btn-dsh-add-custom">
+            <span class="dsh-plus-icon">+</span> 添加自定义提供方
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- DSH 风格提供方编辑/添加模态对话框 (绝对保障现代样式) -->
+  <div class="modal-backdrop" id="modal-dsh-provider-editor" style="display: none; z-index: 1050; align-items: center; justify-content: center;">
+    <div style="width: 540px; max-width: 92vw; background: #ffffff; color: #111827; border-radius: 16px; border: 1px solid #e5e7eb; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.35); display: flex; flex-direction: column; overflow: hidden;">
+      
+      <!-- 头部 -->
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 18px 24px; border-bottom: 1px solid #f3f4f6; background: #ffffff;">
+        <h3 id="dsh-editor-title" style="margin: 0; font-size: 16px; font-weight: 600; color: #111827;">编辑提供方</h3>
+        <button type="button" class="btn-dsh-close-icon" id="btn-close-dsh-editor" style="background: transparent; border: none; font-size: 16px; color: #9ca3af; cursor: pointer;">✕</button>
+      </div>
+
+      <!-- 表单主体 -->
+      <div style="padding: 22px 24px; display: flex; flex-direction: column; gap: 16px; background: #ffffff;">
+        <div style="display: flex; flex-direction: column; gap: 6px; width: 100%;">
+          <label style="font-size: 13px; font-weight: 500; color: #374151;">提供方名称 <span style="color: #ef4444;">*</span></label>
+          <input type="text" id="dsh-prov-name" placeholder="例如: AgentRouter 或 DeepSeek" style="width: 100%; box-sizing: border-box; height: 40px; padding: 0 14px; background: #f9fafb; border: 1px solid #d1d5db; border-radius: 8px; font-size: 13px; color: #111827; outline: none;">
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 6px; width: 100%;">
+          <label style="font-size: 13px; font-weight: 500; color: #374151;">协议类型 <span style="color: #ef4444;">*</span></label>
+          <select id="dsh-prov-protocol" style="width: 100%; box-sizing: border-box; height: 40px; padding: 0 12px; background: #f9fafb; border: 1px solid #d1d5db; border-radius: 8px; font-size: 13px; color: #111827; outline: none; cursor: pointer;">
+            <option value="openai">OpenAI 兼容协议 (/v1/chat/completions)</option>
+            <option value="anthropic">Anthropic Claude 协议 (/v1/messages)</option>
+            <option value="ollama">Ollama 本地协议 (/api/chat)</option>
+          </select>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 6px; width: 100%;">
+          <label style="font-size: 13px; font-weight: 500; color: #374151;">API 基础地址 (Base URL) <span style="color: #ef4444;">*</span></label>
+          <input type="text" id="dsh-prov-base-url" placeholder="例如: https://ps.air-outer.com/v1" style="width: 100%; box-sizing: border-box; height: 40px; padding: 0 14px; background: #f9fafb; border: 1px solid #d1d5db; border-radius: 8px; font-size: 13px; color: #111827; outline: none; font-family: monospace;">
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 6px; width: 100%;">
+          <label style="font-size: 13px; font-weight: 500; color: #374151;">API 密钥 (API Key) <span style="color: #ef4444;">*</span></label>
+          <div style="position: relative; width: 100%; display: flex; align-items: center;">
+            <input type="password" id="dsh-prov-api-key" placeholder="sk-..." style="width: 100%; box-sizing: border-box; height: 40px; padding: 0 40px 0 14px; background: #f9fafb; border: 1px solid #d1d5db; border-radius: 8px; font-size: 13px; color: #111827; outline: none; font-family: monospace;">
+            <button type="button" id="btn-dsh-toggle-pwd" title="显隐密钥" style="position: absolute; right: 10px; background: transparent; border: none; cursor: pointer; font-size: 15px; padding: 4px; opacity: 0.6;">👁️</button>
+          </div>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 6px; width: 100%;">
+          <label style="font-size: 13px; font-weight: 500; color: #374151;">可用模型列表 <span style="font-size: 12px; font-weight: normal; color: #9ca3af;">(英文逗号分隔)</span></label>
+          <input type="text" id="dsh-prov-models" placeholder="例如: gpt-5.6-sol, claude-opus-4-8, claude-opus-5" style="width: 100%; box-sizing: border-box; height: 40px; padding: 0 14px; background: #f9fafb; border: 1px solid #d1d5db; border-radius: 8px; font-size: 13px; color: #111827; outline: none; font-family: monospace;">
+        </div>
+
+        <div id="dsh-prov-status-msg" style="display: none; padding: 10px 14px; border-radius: 8px; font-size: 12px; line-height: 1.5;"></div>
+      </div>
+
+      <!-- 底部动作栏 -->
+      <div style="padding: 16px 24px; background: #f9fafb; border-top: 1px solid #f3f4f6; display: flex; justify-content: space-between; align-items: center;">
+        <button type="button" id="btn-dsh-test-prov" style="background: #ffffff; border: 1px solid #d1d5db; color: #374151; padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+          <span>🔗</span> 连通性测试
+        </button>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <button type="button" id="btn-dsh-cancel-prov" style="background: #ffffff; border: 1px solid #d1d5db; color: #4b5563; padding: 8px 18px; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer;">取消</button>
+          <button type="button" id="btn-dsh-save-prov" style="background: #ea580c; border: none; color: #ffffff; padding: 8px 22px; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);">保存提供方</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+  <div class="modal-backdrop" id="modal-theme" style="display: none;">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3><span class="modal-icon">🎨</span> 主题与外观设置</h3>
+        <button class="modal-close" id="btn-close-theme">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="provider-desc" style="margin-bottom: 16px;">选择最适合您视觉习惯的高对比度工业级配色方案：</p>
+        <div class="theme-grid" id="theme-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <div class="theme-card active" data-theme="dark" style="border: 2px solid var(--accent); padding: 14px; border-radius: var(--radius-md); cursor: pointer; background: #18181b;">
+            <div style="font-weight: 600; color: #f4f4f5; margin-bottom: 4px;">🌙 深色极客 (Dark)</div>
+            <div style="font-size: 11px; color: #a1a1aa;">高对比度纯黑沉浸开发体验</div>
+          </div>
+          <div class="theme-card" data-theme="dark-soft" style="border: 1px solid var(--border); padding: 14px; border-radius: var(--radius-md); cursor: pointer; background: #1e1e2e;">
+            <div style="font-weight: 600; color: #cdd6f4; margin-bottom: 4px;">🌌 柔和深邃 (Dark Soft)</div>
+            <div style="font-size: 11px; color: #a6adc8;">护眼低刺激深蓝灰基调</div>
+          </div>
+          <div class="theme-card" data-theme="light" style="border: 1px solid var(--border); padding: 14px; border-radius: var(--radius-md); cursor: pointer; background: #ffffff;">
+            <div style="font-weight: 600; color: #18181b; margin-bottom: 4px;">☀️ 亮色清爽 (Light)</div>
+            <div style="font-size: 11px; color: #71717a;">高清晰度纯白办公模式</div>
+          </div>
+          <div class="theme-card" data-theme="light-soft" style="border: 1px solid var(--border); padding: 14px; border-radius: var(--radius-md); cursor: pointer; background: #faf4ed;">
+            <div style="font-weight: 600; color: #575279; margin-bottom: 4px;">📖 柔和暖阳 (Light Soft)</div>
+            <div style="font-size: 11px; color: #797593;">经典纸质阅读温暖质感</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- About Modal -->
+  <div class="modal-backdrop" id="modal-about" style="display: none;">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3><span class="modal-icon">ℹ️</span> 关于 Codex Desktop</h3>
+        <button class="modal-close" id="btn-close-about">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="about-hero">
+          <div class="hero-logo-box"><div class="hero-logo">CX</div></div>
+          <h4>Codex Desktop Harness</h4>
+          <p id="about-version">版本: v1.0.0 (Windows x64)</p>
+        </div>
+        <p class="about-desc">面向工业级开发者的全能 AI 编程工作台，支持原生多模态视觉、多模型 Provider 实时切换与 35 项工业级开发技能。</p>
+        <div class="about-skills-section">
+          <strong>内置 35 个全流程开发技能:</strong>
+          <div class="skills-tags-cloud" id="skills-tags-cloud"></div>
+        </div>
+                <!-- GitHub 开源仓库卡片 -->
+        <div class="about-repo-card" id="about-repo-card" title="点击在浏览器中访问 GitHub 开源仓库">
+          <div class="repo-card-left">
+            <div class="repo-icon-wrap">
+              <svg class="github-icon" width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+              </svg>
+            </div>
+            <div class="repo-info">
+              <span class="repo-title">开源代码仓库</span>
+              <span class="repo-url">Simon-yyy/Codex-Harness-DeskTop</span>
+            </div>
+          </div>
+          <button class="btn-repo-jump" type="button">⭐ 访问仓库 ↗</button>
+        </div>
+
+        <div class="about-actions" style="margin-top: 18px; text-align: right;">
+          <button class="btn-secondary" id="btn-check-updates">检查更新...</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+
+    <!-- DSH 风格原生极客状态栏 (Bottom Status Bar) -->
+    <footer class="dsh-status-bar" id="dsh-status-bar">
+      <div class="status-bar-left">
+        <span class="status-item status-dot-wrap"><span class="status-dot online"></span> 就绪</span>
+        <span class="status-sep">|</span>
+        <span class="status-item" id="status-latency-metric">首 token 1.2s · 138 tok/s</span>
+        <span class="status-sep">|</span>
+        <span class="status-item" id="status-cache-metric">缓存命中 99%</span>
+        <span class="status-sep">|</span>
+        <span class="status-item" id="status-token-metric">输入 2.4k · 输出 620 tok</span>
+      </div>
+      <div class="status-bar-right">
+        <span class="status-item status-repo-link" id="status-repo-link" title="点击在浏览器中访问 GitHub 开源仓库">⭐ GitHub: Codex-Harness-DeskTop ↗</span>
+        <span class="status-sep">|</span>
+        <span class="status-item" id="status-shortcut-hint">Ctrl+N 新建 · Ctrl+K 搜索 · Ctrl+L 重置</span>
+      </div>
+    </footer>
+  </body>
+</html>
