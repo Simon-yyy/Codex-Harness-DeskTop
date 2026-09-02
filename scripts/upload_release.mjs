@@ -2,9 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 
+const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 const OWNER = 'Simon-yyy';
 const REPO = 'Codex-Harness-DeskTop';
-const TAG = 'v1.0.1';
+const TAG = `v${pkg.version}`;
 
 function getToken() {
   return new Promise((resolve, reject) => {
@@ -53,16 +54,16 @@ async function upload() {
   const existingNames = new Set(release.assets.map(a => a.name));
 
   // 本地要上传的文件
-  const releaseFolder = path.resolve('release', 'v1.0.1');
+  const releaseFolder = path.resolve('release', TAG);
   const filesToUpload = [
     {
-      filePath: path.join(releaseFolder, 'Codex Desktop Setup 1.0.1.exe'),
-      name: 'Codex.Desktop.Setup.1.0.1.exe',
+      filePath: path.join(releaseFolder, `Codex Desktop Setup ${pkg.version}.exe`),
+      name: `Codex.Desktop.Setup.${pkg.version}.exe`,
       contentType: 'application/octet-stream'
     },
     {
-      filePath: path.join(releaseFolder, 'Codex Desktop Setup 1.0.1.exe.blockmap'),
-      name: 'Codex.Desktop.Setup.1.0.1.exe.blockmap',
+      filePath: path.join(releaseFolder, `Codex Desktop Setup ${pkg.version}.exe.blockmap`),
+      name: `Codex.Desktop.Setup.${pkg.version}.exe.blockmap`,
       contentType: 'application/octet-stream'
     }
   ];
