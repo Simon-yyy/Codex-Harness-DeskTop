@@ -52,16 +52,21 @@
 codex-desktop/
 ├── main.js                  # Electron 主进程：窗口管理、原生中文菜单、自动更新流、IPC 管道、技能热同步
 ├── preload.js               # 安全预加载脚本：上下文隔离桥梁、主题引擎注入、原生剪贴板拦截
-├── ui/                      # 渲染进程前端工作台
-│   ├── index.html           # 界面骨架：侧边栏(会话/文件/技能)、消息流、排队指示条、Composer输入区
-│   ├── style.css            # 现代美学设计系统：CSS 变量、4 套高对比度主题、微动效与响应式布局
-│   └── app.js               # 核心渲染逻辑：会话持久化、Tab Queueing 调度、Slash 指令系统、大模型请求解析
+├── src/                     # 现代化 React 19 + TypeScript 渲染层
+│   ├── main.tsx             # React 渲染入口
+│   ├── App.tsx              # 主工作台三栏布局与领域状态调度
+│   ├── components/          # 独立组件库 (Sidebar, ChatStream, Composer, PreviewPanel, Modals)
+│   ├── hooks/               # 响应式状态机 (useSessions, useTabQueue, useProviders, useTheme, useUpdater)
+│   ├── types/               # 全链路强类型定义 (electron.d.ts, session.ts, provider.ts)
+│   └── styles/              # TailwindCSS 与 4 款高对比度主题变量
+├── ui/                      # 渲染进程构建产物 (ui/dist/) 与同构静态支持
 ├── .agents/skills/          # 内置 43 项全流程工业级与 Loop Engineering 技能库 (启动时自动增量部署)
 ├── scripts/
 │   ├── release.mjs          # 发版流水线：SHA-256 校验、版本产物自动归档至 release/v<version>/、发布说明生成
+│   ├── sync-ui.mjs          # UI 双向同构同步流水线
 │   └── upload_release.mjs   # GitHub Releases 自动化上传脚本
 ├── tests/                   # 16 大 Seam 边界全自动化 TDD 测试套件
-│   ├── run-all-tests.mjs    # 主测试执行器 (57 项全量单元与集成断言)
+│   ├── run-all-tests.mjs    # 主测试执行器 (58 项全量单元与集成断言)
 │   ├── renderer-behavior.test.mjs # 渲染层 VM + DOM 桩行为测试
 │   └── reply-parsing.test.mjs     # LLM 响应解析与防 HTML 误判测试
 ├── release/                 # 发布产物与安装包归档目录
@@ -78,7 +83,7 @@ codex-desktop/
 npm start
 ```
 
-### 2. 执行自动化测试 (16 Seams / 57 Tests)
+### 2. 执行自动化测试 (16 Seams / 58 Tests)
 ```bash
 npm test
 ```
@@ -91,11 +96,6 @@ npm run build
 ### 4. 发版归档与 SHA-256 校验
 ```bash
 npm run release
-```
-
-### 5. 交付物证核验 (Harness Gate)
-```bash
-agent-verify
 ```
 
 ---
