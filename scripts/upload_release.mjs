@@ -44,12 +44,36 @@ async function upload() {
 
   console.log('1. 查询当前 Release 信息...');
   const relRes = await fetchWithRetry(`https://api.github.com/repos/${OWNER}/${REPO}/releases/tags/${TAG}`, { headers });
+  let release;
   if (!relRes.ok) {
-    throw new Error(`获取 Release 失败: ${relRes.status} ${await relRes.text()}`);
+    if (relRes.status === 404) {
+      console.log(`Release ${TAG} 不存在，正在自动创建 GitHub Release...`);
+      const notesPath = path.join(path.resolve('release', TAG), 'RELEASE_NOTES.md');
+      const body = fs.existsSync(notesPath) ? fs.readFileSync(notesPath, 'utf8') : `Codex Desktop ${TAG} Release`;
+      const createRes = await fetchWithRetry(`https://api.github.com/repos/${OWNER}/${REPO}/releases`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          tag_name: TAG,
+          name: `Codex Desktop ${TAG}`,
+          body: body,
+          draft: false,
+          prerelease: false
+        })
+      });
+      if (!createRes.ok) {
+        throw new Error(`创建 Release 失败: ${createRes.status} ${await createRes.text()}`);
+      }
+      release = await createRes.json();
+      console.log(`✓ 成功创建 Release: ${release.name} (ID: ${release.id})`);
+    } else {
+      throw new Error(`获取 Release 失败: ${relRes.status} ${await relRes.text()}`);
+    }
+  } else {
+    release = await relRes.json();
+    console.log(`✓ 找到 Release: ${release.name} (ID: ${release.id})`);
   }
-  const release = await relRes.json();
-  console.log(`✓ 找到 Release: ${release.name} (ID: ${release.id})`);
-  console.log(`   已有资产数: ${release.assets.length}`);
+  console.log(`   已有资产数: ${release.assets ? release.assets.length : 0}`);
 
   const existingNames = new Set(release.assets.map(a => a.name));
 
