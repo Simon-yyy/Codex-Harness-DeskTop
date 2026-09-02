@@ -33,6 +33,62 @@ function safeMove(src, dest) {
   }
 }
 
+const MAX_RETAINED_VERSIONS = 3;
+
+function parseSemver(vStr) {
+  const clean = vStr.replace(/^v/, '');
+  const parts = clean.split('.').map(n => parseInt(n, 10) || 0);
+  return {
+    major: parts[0] || 0,
+    minor: parts[1] || 0,
+    patch: parts[2] || 0
+  };
+}
+
+function compareSemver(a, b) {
+  const sa = parseSemver(a);
+  const sb = parseSemver(b);
+  if (sa.major !== sb.major) return sa.major - sb.major;
+  if (sa.minor !== sb.minor) return sa.minor - sb.minor;
+  return sa.patch - sb.patch;
+}
+
+function pruneOldReleases() {
+  if (!fs.existsSync(releaseDir)) return;
+  const entries = fs.readdirSync(releaseDir, { withFileTypes: true });
+  
+  // 找出所有形如 v1.0.0 的版本目录
+  const versionFolders = entries
+    .filter(e => e.isDirectory() && /^v\d+\.\d+\.\d+$/.test(e.name))
+    .map(e => e.name)
+    .sort(compareSemver); // 升序排序
+
+  // 如果版本目录超过 3 个，删除最旧的
+  if (versionFolders.length > MAX_RETAINED_VERSIONS) {
+    const toDeleteCount = versionFolders.length - MAX_RETAINED_VERSIONS;
+    const toDeleteFolders = versionFolders.slice(0, toDeleteCount);
+
+    for (const folder of toDeleteFolders) {
+      const fullPath = path.join(releaseDir, folder);
+      try {
+        fs.rmSync(fullPath, { recursive: true, force: true });
+        process.stdout.write(`🧹 自动修剪历史旧版本: 已清理 release/${folder}/ (保留最新 ${MAX_RETAINED_VERSIONS} 个版本)\n`);
+      } catch (err) {
+        process.stderr.write(`清理旧版本 ${folder} 失败: ${err.message}\n`);
+      }
+    }
+  }
+
+  // 清理 release 根目录下的残留游离 .exe / .blockmap
+  entries.forEach(e => {
+    if (e.isFile() && (e.name.endsWith('.exe') || e.name.endsWith('.blockmap'))) {
+      try {
+        fs.unlinkSync(path.join(releaseDir, e.name));
+      } catch (err) {}
+    }
+  });
+}
+
 async function main() {
   const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
   const version = pkg.version;
@@ -81,7 +137,10 @@ async function main() {
 `;
 
   fs.writeFileSync(path.join(versionFolder, 'RELEASE_NOTES.md'), notes, 'utf8');
-  console.log(`✓ Codex Desktop v${version} 已成功归档至 release/v${version}/ 目录！`);
+  process.stdout.write(`✓ Codex Desktop v${version} 已成功归档至 release/v${version}/ 目录！\n`);
+
+  // 执行旧版本修剪清理
+  pruneOldReleases();
 }
 
 main().catch(console.error);

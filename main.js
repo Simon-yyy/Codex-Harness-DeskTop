@@ -12,6 +12,24 @@ let isQuitting = false;
 // ---------------------------------------------------------------------------
 // 自动初始化并热同步内置技能 (35 个 Matt Pocock 技能 + 8 个 Loop Engineering 技能)
 // ---------------------------------------------------------------------------
+function copyDirRecursive(src, dest) {
+  if (!fs.existsSync(dest)) {
+    fs.mkdirSync(dest, { recursive: true });
+  }
+  const entries = fs.readdirSync(src, { withFileTypes: true });
+  for (const entry of entries) {
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      copyDirRecursive(srcPath, destPath);
+    } else {
+      if (!fs.existsSync(destPath) || fs.statSync(srcPath).size !== fs.statSync(destPath).size) {
+        fs.copyFileSync(srcPath, destPath);
+      }
+    }
+  }
+}
+
 function initBuiltinSkills() {
   try {
     const userHome = os.homedir();
@@ -23,22 +41,12 @@ function initBuiltinSkills() {
     const sourceSkillsDir = path.join(__dirname, ".agents", "skills");
     let syncedCount = 0;
     if (fs.existsSync(sourceSkillsDir)) {
-      const skills = fs.readdirSync(sourceSkillsDir);
+      const skills = fs.readdirSync(sourceSkillsDir, { withFileTypes: true });
       for (const s of skills) {
-        const srcPath = path.join(sourceSkillsDir, s);
-        const destPath = path.join(targetDir, s);
-        if (fs.statSync(srcPath).isDirectory()) {
-          if (!fs.existsSync(destPath)) {
-            fs.mkdirSync(destPath, { recursive: true });
-          }
-          const files = fs.readdirSync(srcPath);
-          for (const f of files) {
-            const srcFile = path.join(srcPath, f);
-            const destFile = path.join(destPath, f);
-            if (!fs.existsSync(destFile) || fs.statSync(srcFile).size !== fs.statSync(destFile).size) {
-              fs.copyFileSync(srcFile, destFile);
-            }
-          }
+        if (s.isDirectory()) {
+          const srcPath = path.join(sourceSkillsDir, s.name);
+          const destPath = path.join(targetDir, s.name);
+          copyDirRecursive(srcPath, destPath);
           syncedCount++;
         }
       }
@@ -114,19 +122,39 @@ function createApplicationMenu() {
       submenu: [
         {
           label: "escook Dark (经典暗色)",
-          click: () => { if (mainWindow) mainWindow.webContents.send("menu-action", "theme:dark"); }
+          click: () => {
+            if (mainWindow) {
+              mainWindow.webContents.send("menu-action", "theme:dark");
+              mainWindow.webContents.send("theme-change", "dark");
+            }
+          }
         },
         {
           label: "escook Dark Soft (柔和暗色)",
-          click: () => { if (mainWindow) mainWindow.webContents.send("menu-action", "theme:dark-soft"); }
+          click: () => {
+            if (mainWindow) {
+              mainWindow.webContents.send("menu-action", "theme:dark-soft");
+              mainWindow.webContents.send("theme-change", "dark-soft");
+            }
+          }
         },
         {
           label: "escook Light (暖色调亮)",
-          click: () => { if (mainWindow) mainWindow.webContents.send("menu-action", "theme:light"); }
+          click: () => {
+            if (mainWindow) {
+              mainWindow.webContents.send("menu-action", "theme:light");
+              mainWindow.webContents.send("theme-change", "light");
+            }
+          }
         },
         {
           label: "escook Light Soft (柔和亮色)",
-          click: () => { if (mainWindow) mainWindow.webContents.send("menu-action", "theme:light-soft"); }
+          click: () => {
+            if (mainWindow) {
+              mainWindow.webContents.send("menu-action", "theme:light-soft");
+              mainWindow.webContents.send("theme-change", "light-soft");
+            }
+          }
         }
       ]
     },
@@ -182,7 +210,22 @@ function createWindow() {
     }
   });
 
-  mainWindow.loadFile(path.join(__dirname, "ui", "index.html"));
+  mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    process.stdout.write(`[Renderer Console] [L${level}] ${message} (at ${sourceId}:${line})\n`);
+  });
+
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    process.stderr.write(`[Renderer Load Fail] ${errorCode}: ${errorDescription} (${validatedURL})\n`);
+  });
+
+  const distIndexPath = path.join(__dirname, "ui", "dist", "index.html");
+  if (process.env.VITE_DEV_SERVER_URL) {
+    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
+  } else {
+    mainWindow.loadFile(distIndexPath).catch(() => {
+      mainWindow.loadFile(path.join(__dirname, "ui", "index.html"));
+    });
+  }
 
   mainWindow.once("ready-to-show", () => {
     mainWindow.show();
@@ -259,6 +302,18 @@ function downloadFile(url, destPath, onProgress) {
   });
 }
 
+function isNewerVersion(remote, local) {
+  if (!remote || !local) return false;
+  const parse = v => String(v).replace(/^v/, "").split(".").map(n => parseInt(n, 10) || 0);
+  const [r1, r2, r3] = parse(remote);
+  const [l1, l2, l3] = parse(local);
+  if (r1 > l1) return true;
+  if (r1 < l1) return false;
+  if (r2 > l2) return true;
+  if (r2 < l2) return false;
+  return r3 > l3;
+}
+
 function checkForUpdates(isSilent = false) {
   if (isDownloadingUpdate) {
     if (!isSilent) {
@@ -274,7 +329,7 @@ function checkForUpdates(isSilent = false) {
 
   const options = {
     hostname: "api.github.com",
-    path: "/repos/Simon-yyy/codex-desktop/releases/latest",
+    path: "/repos/Simon-yyy/Codex-Harness-DeskTop/releases/latest",
     headers: { "User-Agent": "cline/3.0.0" }
   };
 
@@ -285,10 +340,14 @@ function checkForUpdates(isSilent = false) {
       try {
         if (res.statusCode !== 200) {
           if (!isSilent) {
+            let tip = `无法连接或未找到远程发布版本 (HTTP ${res.statusCode})。\n当前本地版本: v${app.getVersion()}`;
+            if (res.statusCode === 403) {
+              tip = `GitHub API 访问频次受限 (HTTP 403)。\n请稍后再试，或直接通过【关于】页面的 GitHub 仓库链接获取最新版本！\n当前本地版本: v${app.getVersion()}`;
+            }
             dialog.showMessageBox(mainWindow || null, {
               type: "info",
               title: "检查更新",
-              message: `当前已经是最新版本 (v${app.getVersion()})。`,
+              message: tip,
               buttons: ["确定"]
             });
           }
@@ -299,7 +358,7 @@ function checkForUpdates(isSilent = false) {
         const latestTag = (data.tag_name || "").replace(/^v/, "");
         const currentVer = app.getVersion();
 
-        if (latestTag && latestTag !== currentVer) {
+        if (latestTag && isNewerVersion(latestTag, currentVer)) {
           const exeAsset = (data.assets || []).find((a) => a.name && a.name.endsWith(".exe"));
           const downloadUrl = exeAsset ? exeAsset.browser_download_url : "";
 
@@ -431,6 +490,49 @@ ipcMain.handle("get-app-info", () => {
     platform: process.platform,
     arch: process.arch
   };
+});
+
+ipcMain.handle("get-skills", async () => {
+  const skills = [];
+  try {
+    const skillsDir = path.join(__dirname, ".agents", "skills");
+    if (fs.existsSync(skillsDir)) {
+      const entries = fs.readdirSync(skillsDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          const skillFile = path.join(skillsDir, entry.name, "SKILL.md");
+          if (fs.existsSync(skillFile)) {
+            const raw = fs.readFileSync(skillFile, "utf8");
+            let name = entry.name;
+            let desc = "OpenAI Codex 工业级工程技能";
+            let content = raw;
+
+            // 解析 YAML frontmatter
+            const fmMatch = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+            if (fmMatch) {
+              const fm = fmMatch[1];
+              content = fmMatch[2].trim();
+              const nameMatch = fm.match(/^name:\s*(.+)$/m);
+              const descMatch = fm.match(/^description:\s*(.+)$/m);
+              if (nameMatch) name = nameMatch[1].trim();
+              if (descMatch) desc = descMatch[1].trim();
+            }
+
+            skills.push({
+              id: entry.name,
+              name: name,
+              description: desc,
+              prompt: content,
+              content: content
+            });
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error("[codex-desktop] 加载技能库失败:", err);
+  }
+  return skills;
 });
 
 ipcMain.handle("check-for-updates-manual", () => {

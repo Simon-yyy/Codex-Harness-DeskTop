@@ -444,6 +444,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const rightPanel = document.getElementById("right-panel");
   const btnToggleRightPanel = document.getElementById("btn-toggle-right-panel");
+  const btnCloseRightPanel = document.getElementById("btn-close-right-panel");
 
   let isGenerating = false;
   let selectedImages = [];
@@ -717,6 +718,12 @@ document.addEventListener("DOMContentLoaded", () => {
       } else {
         rightPanel.style.display = "none";
       }
+    });
+  }
+
+  if (btnCloseRightPanel && rightPanel) {
+    btnCloseRightPanel.addEventListener("click", () => {
+      rightPanel.style.display = "none";
     });
   }
 
@@ -1572,6 +1579,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if (modalDshEditor) { modalDshEditor.style.display = "none"; modalDshEditor.classList.remove("show"); }
     if (modalTheme) { modalTheme.style.display = "none"; modalTheme.classList.remove("show"); }
     if (modalAbout) { modalAbout.style.display = "none"; modalAbout.classList.remove("show"); }
+    if (modalLightbox) { modalLightbox.style.display = "none"; modalLightbox.classList.remove("show"); }
+    if (modalUpdatePrompt) { modalUpdatePrompt.style.display = "none"; modalUpdatePrompt.classList.remove("show"); }
   }
 
   if (btnSettingsModal) {
@@ -1667,8 +1676,20 @@ document.addEventListener("DOMContentLoaded", () => {
   btnCloseAbout.addEventListener("click", closeAllModals);
 
   // ==========================================
-  // 🚀 客户端全自动更新与横条交互控制
+  // 🚀 客户端全自动更新与更新卡片弹窗控制
   // ==========================================
+  const modalUpdatePrompt = document.getElementById("modal-update-prompt");
+  const updatePromptTitle = document.getElementById("update-prompt-title");
+  const updatePromptSubtitle = document.getElementById("update-prompt-subtitle");
+  const updatePromptNotes = document.getElementById("update-prompt-notes");
+  const btnCloseUpdatePrompt = document.getElementById("btn-close-update-prompt");
+  const btnUpdatePromptDismiss = document.getElementById("btn-update-prompt-dismiss");
+  const btnUpdatePromptInstall = document.getElementById("btn-update-prompt-install");
+  const updateModalProgressWrap = document.getElementById("update-modal-progress-wrap");
+  const updateModalProgressLabel = document.getElementById("update-modal-progress-label");
+  const updateModalProgressVal = document.getElementById("update-modal-progress-val");
+  const updateModalProgressFill = document.getElementById("update-modal-progress-fill");
+
   const updateBanner = document.getElementById("update-notification-banner");
   const updateBannerText = document.getElementById("update-banner-text");
   const btnBannerUpdateNow = document.getElementById("btn-banner-update-now");
@@ -1677,17 +1698,39 @@ document.addEventListener("DOMContentLoaded", () => {
   const updateProgressFill = document.getElementById("update-progress-bar-fill");
   let pendingUpdatePayload = null;
 
-  if (btnBannerUpdateDismiss && updateBanner) {
-    btnBannerUpdateDismiss.addEventListener("click", () => {
-      updateBanner.style.display = "none";
-    });
+  function showUpdatePromptModal(info) {
+    if (!modalUpdatePrompt || !info) return;
+    pendingUpdatePayload = info;
+    if (updatePromptTitle) updatePromptTitle.innerText = `发现全新版本 v${info.latestVersion}`;
+    if (updatePromptSubtitle) updatePromptSubtitle.innerText = `当前版本: v${info.currentVersion || "1.0.2"} · 发现全新工业级能力与性能升级`;
+    if (updatePromptNotes) {
+      updatePromptNotes.innerText = info.body || "常规性能提升、界面自适应与体验优化。";
+    }
+    if (updateModalProgressWrap) updateModalProgressWrap.style.display = "none";
+    if (btnUpdatePromptInstall) {
+      btnUpdatePromptInstall.disabled = false;
+      btnUpdatePromptInstall.innerHTML = `<span>⚡</span> 立即更新升级`;
+    }
+    modalUpdatePrompt.style.display = "flex";
+    modalUpdatePrompt.classList.add("show");
   }
 
-  if (btnBannerUpdateNow) {
-    btnBannerUpdateNow.addEventListener("click", () => {
+  function closeUpdatePromptModal() {
+    if (modalUpdatePrompt) {
+      modalUpdatePrompt.style.display = "none";
+      modalUpdatePrompt.classList.remove("show");
+    }
+  }
+
+  if (btnCloseUpdatePrompt) btnCloseUpdatePrompt.addEventListener("click", closeUpdatePromptModal);
+  if (btnUpdatePromptDismiss) btnUpdatePromptDismiss.addEventListener("click", closeUpdatePromptModal);
+
+  if (btnUpdatePromptInstall) {
+    btnUpdatePromptInstall.addEventListener("click", () => {
       if (pendingUpdatePayload && window.codexDesktop && window.codexDesktop.startDownloadUpdate) {
-        btnBannerUpdateNow.disabled = true;
-        btnBannerUpdateNow.innerText = "⏳ 下载中...";
+        btnUpdatePromptInstall.disabled = true;
+        btnUpdatePromptInstall.innerHTML = `<span>⏳</span> 正在下载...`;
+        if (updateModalProgressWrap) updateModalProgressWrap.style.display = "block";
         if (updateProgressWrap) updateProgressWrap.style.display = "block";
         window.codexDesktop.startDownloadUpdate({
           downloadUrl: pendingUpdatePayload.downloadUrl,
@@ -1697,10 +1740,28 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  if (btnBannerUpdateDismiss && updateBanner) {
+    btnBannerUpdateDismiss.addEventListener("click", () => {
+      updateBanner.style.display = "none";
+    });
+  }
+
+  if (btnBannerUpdateNow) {
+    btnBannerUpdateNow.addEventListener("click", () => {
+      if (pendingUpdatePayload) {
+        showUpdatePromptModal(pendingUpdatePayload);
+      }
+    });
+  }
+
   if (window.codexDesktop) {
     if (window.codexDesktop.onUpdateAvailable) {
       window.codexDesktop.onUpdateAvailable((info) => {
         pendingUpdatePayload = info;
+        // 1. 弹出卡片简要介绍更新内容供用户自主决策
+        showUpdatePromptModal(info);
+
+        // 2. 顶部常驻横条备选展示
         if (updateBanner && updateBannerText) {
           updateBannerText.innerHTML = `🎉 发现全新版本 <strong>v${escapeHtml(info.latestVersion)}</strong>！已就绪，可随时一键升级。`;
           updateBanner.style.display = "flex";
@@ -1710,7 +1771,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (window.codexDesktop.onUpdateDownloading) {
       window.codexDesktop.onUpdateDownloading(() => {
+        if (updateModalProgressWrap) updateModalProgressWrap.style.display = "block";
         if (updateProgressWrap) updateProgressWrap.style.display = "block";
+        if (btnUpdatePromptInstall) {
+          btnUpdatePromptInstall.disabled = true;
+          btnUpdatePromptInstall.innerHTML = `<span>⏳</span> 正在下载安装包...`;
+        }
         if (btnBannerUpdateNow) {
           btnBannerUpdateNow.disabled = true;
           btnBannerUpdateNow.innerText = "⏳ 正在下载安装包...";
@@ -1720,6 +1786,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (window.codexDesktop.onUpdateProgress) {
       window.codexDesktop.onUpdateProgress((prog) => {
+        if (updateModalProgressFill) {
+          updateModalProgressFill.style.width = `${prog.percent}%`;
+        }
+        if (updateModalProgressVal) {
+          updateModalProgressVal.innerText = `${prog.percent}%`;
+        }
         if (updateProgressFill) {
           updateProgressFill.style.width = `${prog.percent}%`;
         }
@@ -1731,6 +1803,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (window.codexDesktop.onUpdateDownloaded) {
       window.codexDesktop.onUpdateDownloaded((res) => {
+        if (updateModalProgressLabel) {
+          updateModalProgressLabel.innerText = `✓ v${res.version} 下载完成，即将重启安装！`;
+        }
+        if (btnUpdatePromptInstall) {
+          btnUpdatePromptInstall.innerHTML = `<span>✓</span> 立即安装`;
+        }
         if (updateBannerText) {
           updateBannerText.innerText = `✓ v${res.version} 下载完成，即将重启安装！`;
         }

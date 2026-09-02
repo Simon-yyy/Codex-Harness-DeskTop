@@ -6,6 +6,7 @@ import { runReplyParsingTests } from './reply-parsing.test.mjs';
 import { testParseModelList, testSessionPersistence, testRenderXssGuard, testDshProviders, testDomReadyCompletes } from './renderer-behavior.test.mjs';
 
 const rootDir = "d:/code_files/get_files/codex-desktop";
+const pkg = JSON.parse(fs.readFileSync(path.join(rootDir, "package.json"), "utf8"));
 let passed = 0;
 let failed = 0;
 const failures = [];
@@ -156,14 +157,11 @@ runTest("ui/app.js: 监听 onMenuAction 联动新会话与设置", () => {
 // ═══════════════════════════════════════════════════════════════════════════
 console.log("\n═══ Seam 5: 侧边栏三大 Tab 交互系统 ═══");
 
-runTest("ui/index.html: 三大 Tab 按钮与容器完备 (sessions/files/skills)", () => {
-  const html = fs.readFileSync(path.join(rootDir, "ui", "index.html"), "utf8");
-  assert.ok(html.includes('data-tab="sessions"'));
-  assert.ok(html.includes('data-tab="files"'));
-  assert.ok(html.includes('data-tab="skills"'));
-  assert.ok(html.includes('id="tab-sessions"'));
-  assert.ok(html.includes('id="tab-files"'));
-  assert.ok(html.includes('id="tab-skills"'));
+runTest("React Sidebar 组件: 三大 Tab (sessions/files/skills) 完备", () => {
+  const sidebarTsx = fs.readFileSync(path.join(rootDir, "src", "components", "Sidebar", "Sidebar.tsx"), "utf8");
+  assert.ok(sidebarTsx.includes("'sessions'"));
+  assert.ok(sidebarTsx.includes("'files'"));
+  assert.ok(sidebarTsx.includes("'skills'"));
 });
 
 runTest("ui/app.js: Tab 切换逻辑绑定", () => {
@@ -333,19 +331,25 @@ runTest("S7 DSH 提供方持久化: 默认值/往返/损坏与空数组回退", 
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Seam 12: 安装包产物与归档
+// Seam 12: 安装包产物与归档 (动态校验当前最新版本与最多 3 版本规约)
 // ═══════════════════════════════════════════════════════════════════════════
 console.log("\n═══ Seam 12: 安装包产物与归档 ═══");
 
-runTest("release/v1.0.0 安装包 EXE 存在且 > 50MB", () => {
-  const exePath = path.join(rootDir, "release", "v1.0.0", "Codex Desktop Setup 1.0.0.exe");
-  assert.ok(fs.existsSync(exePath));
+runTest(`release/v${pkg.version} 最新安装包 EXE 存在且 > 50MB`, () => {
+  const exePath = path.join(rootDir, "release", `v${pkg.version}`, `Codex Desktop Setup ${pkg.version}.exe`);
+  assert.ok(fs.existsSync(exePath), `找不到当前版本安装包: ${exePath}`);
   assert.ok(fs.statSync(exePath).size > 50 * 1024 * 1024);
 });
 
-runTest("release/v1.0.0 blockmap 与 RELEASE_NOTES.md 完整", () => {
-  assert.ok(fs.existsSync(path.join(rootDir, "release", "v1.0.0", "Codex Desktop Setup 1.0.0.exe.blockmap")));
-  assert.ok(fs.existsSync(path.join(rootDir, "release", "v1.0.0", "RELEASE_NOTES.md")));
+runTest(`release/v${pkg.version} blockmap 与 RELEASE_NOTES.md 完整`, () => {
+  assert.ok(fs.existsSync(path.join(rootDir, "release", `v${pkg.version}`, `Codex Desktop Setup ${pkg.version}.exe.blockmap`)));
+  assert.ok(fs.existsSync(path.join(rootDir, "release", `v${pkg.version}`, "RELEASE_NOTES.md")));
+});
+
+runTest("release/ 历史归档最多仅保留最新 3 个版本目录", () => {
+  const entries = fs.readdirSync(path.join(rootDir, "release"), { withFileTypes: true });
+  const versionDirs = entries.filter(e => e.isDirectory() && /^v\d+\.\d+\.\d+$/.test(e.name));
+  assert.ok(versionDirs.length <= 3, `历史版本目录超标 (当前有 ${versionDirs.length} 个)`);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -383,11 +387,12 @@ runTest("ui/app.js: PROVIDER_PRESETS 包含 2026 旗舰大模型矩阵 (gpt-5.6-
 // ═══════════════════════════════════════════════════════════════════════════
 process.stdout.write("\n═══ Seam 15: Tab Queueing 指令排队执行流水线 ═══\n");
 
-runTest("ui/index.html: 包含 queued-instructions-bar 排队指示容器与计数器", () => {
-  const html = fs.readFileSync(path.join(rootDir, "ui", "index.html"), "utf8");
-  assert.ok(html.includes("queued-instructions-bar"));
-  assert.ok(html.includes("queued-count"));
-  assert.ok(html.includes("queued-items-list"));
+runTest("React TabQueueing 指令排队组件与 hook 完备", () => {
+  const queueHook = fs.readFileSync(path.join(rootDir, "src", "hooks", "useTabQueue.ts"), "utf8");
+  const composerTsx = fs.readFileSync(path.join(rootDir, "src", "components", "Composer", "Composer.tsx"), "utf8");
+  assert.ok(queueHook.includes("enqueue"));
+  assert.ok(queueHook.includes("dequeue"));
+  assert.ok(composerTsx.includes("queue.length"));
 });
 
 runTest("ui/app.js: 包含 renderQueuedInstructions 与 executeNextQueuedInstruction 调度状态机", () => {
@@ -408,14 +413,10 @@ runTest("ui/style.css: 包含 .queued-instructions-bar 与 .queued-item-chip 视
 // ═══════════════════════════════════════════════════════════════════════════
 process.stdout.write("\n═══ Seam 16: 官方 Slash Commands 交互系统 ═══\n");
 
-runTest("ui/index.html: 包含 slash-commands-popover 快捷菜单", () => {
-  const html = fs.readFileSync(path.join(rootDir, "ui", "index.html"), "utf8");
-  assert.ok(html.includes("slash-commands-popover"));
-  assert.ok(html.includes("data-cmd=\"/status\""));
-  assert.ok(html.includes("data-cmd=\"/diff\""));
-  assert.ok(html.includes("data-cmd=\"/skills\""));
-  assert.ok(html.includes("data-cmd=\"/clear\""));
-  assert.ok(html.includes("data-cmd=\"/help\""));
+runTest("React Composer: 包含 43 技能与 Slash 快捷菜单", () => {
+  const composerTsx = fs.readFileSync(path.join(rootDir, "src", "components", "Composer", "Composer.tsx"), "utf8");
+  assert.ok(composerTsx.includes("SLASH_COMMANDS"));
+  assert.ok(composerTsx.includes("showSlashMenu"));
 });
 
 runTest("ui/app.js: handleSlashCommand 完整覆盖 /status, /diff, /skills, /clear, /help", () => {

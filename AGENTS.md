@@ -11,7 +11,7 @@
 - **技术栈**：
   - **桌面框架**：Electron `33.4.11` (Node.js 运行环境，绝对锁定版本)
   - **打包与分发**：`electron-builder` (`^25.1.8`)，输出 NSIS 独立安装包
-  - **前端与界面**：原生 HTML5 + 现代化 Vanilla CSS (4 款高对比度主题) + Vanilla JavaScript (ES2022)
+  - **现代化前端与界面**：React `18/19` + TypeScript + Vite + TailwindCSS (4 款高对比度主题) + Lucide Icons
   - **模型通信协议**：双协议自适应管道（OpenAI Chat Completions 兼容协议 + Anthropic Messages 协议 + Ollama 本地协议）
   - **官方内核标准**：对齐 OpenAI 官方最新 **Codex CLI (`@openai/codex` v0.152.1)**
 
@@ -23,10 +23,14 @@
 codex-desktop/
 ├── main.js                  # Electron 主进程：窗口管理、原生中文菜单、自动更新流、IPC 管道、技能热同步
 ├── preload.js               # 安全预加载脚本：上下文隔离桥梁、主题引擎注入、原生剪贴板拦截
-├── ui/                      # 渲染进程前端工作台
-│   ├── index.html           # 界面骨架：侧边栏(会话/文件/技能)、消息流、排队指示条、Composer输入区、模型弹窗
-│   ├── style.css            # 现代美学设计系统：CSS 变量、4 套高对比度主题、微动效与响应式布局
-│   └── app.js               # 核心渲染逻辑：会话持久化、Tab Queueing 调度、Slash 指令系统、大模型请求解析
+├── src/                     # 现代化 React 19 + TypeScript 渲染层
+│   ├── main.tsx             # React 渲染入口
+│   ├── App.tsx              # 主工作台三栏布局与领域状态调度
+│   ├── components/          # 独立组件库 (Sidebar, ChatStream, Composer, PreviewPanel, Modals)
+│   ├── hooks/               # 响应式状态机 (useSessions, useTabQueue, useProviders, useTheme, useUpdater)
+│   ├── types/               # 全链路强类型定义 (electron.d.ts, session.ts, provider.ts)
+│   └── styles/              # TailwindCSS 与 4 款高对比度主题变量
+├── ui/                      # 渲染进程构建产物 (ui/dist/) 与原生备选静态文件
 ├── .agents/skills/          # 内置 43 项全流程工业级与 Loop Engineering 技能库 (启动时自动增量部署)
 ├── scripts/
 │   ├── release.mjs          # 发版流水线：SHA-256 校验、版本产物自动归档至 release/v<version>/、发布说明生成

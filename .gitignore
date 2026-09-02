@@ -1,8 +1,33 @@
+# 依赖目录
 node_modules/
+
+# 打包产物与构建输出
 release/
 dist/
-.DS_Store
-*.log
+ui/dist/
+ui/assets/
+**/dist/
+build/
+
+# 本地测试与缓存数据
 _smoke-userdata/
+.cache/
+.eslintcache
+
+# 敏感配置与本地环境变量
+.env
+.env.local
+*.env
+
+# 临时与备份文件
+*.log
+*.tmp
 *.bak
+*.swp
 _*.js
+
+# 操作系统与 IDE 残留
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

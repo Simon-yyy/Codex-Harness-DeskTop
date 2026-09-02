@@ -1,0 +1,121 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  background-color: #18181b;
+  color: #f4f4f5;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   4 套高对比度主题 CSS 变量系统
+═══════════════════════════════════════════════════════════ */
+:root {
+  /* 默认 Dark (escook Dark 经典极客黑) */
+  --bg-base: #18181b;
+  --bg-sidebar: #121215;
+  --bg-card: #202024;
+  --bg-card-elevated: #27272a;
+  --bg-hover: rgba(255, 255, 255, 0.07);
+  --bg-active: rgba(234, 88, 12, 0.15);
+  
+  --border: rgba(255, 255, 255, 0.1);
+  --border-light: rgba(255, 255, 255, 0.05);
+  
+  --text-primary: #f4f4f5;
+  --text-secondary: #a1a1aa;
+  --text-muted: #71717a;
+  
+  --accent: #ea580c;
+  --accent-secondary: #f97316;
+  --accent-warm: #f97316;
+  --accent-green: #10b981;
+  
+  --code-bg: #111827;
+}
+
+[data-theme="dark-soft"] {
+  --bg-base: #1f2430;
+  --bg-sidebar: #191e2a;
+  --bg-card: #262c3c;
+  --bg-card-elevated: #2f364a;
+  --bg-hover: rgba(255, 255, 255, 0.06);
+  --bg-active: rgba(234, 88, 12, 0.15);
+  
+  --border: rgba(255, 255, 255, 0.1);
+  --border-light: rgba(255, 255, 255, 0.05);
+  
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  
+  --accent: #f97316;
+  --accent-secondary: #fb923c;
+  
+  --code-bg: #151a24;
+}
+
+[data-theme="light"] {
+  --bg-base: #f8fafc;
+  --bg-sidebar: #ffffff;
+  --bg-card: #ffffff;
+  --bg-card-elevated: #f1f5f9;
+  --bg-hover: rgba(0, 0, 0, 0.04);
+  --bg-active: rgba(234, 88, 12, 0.1);
+  
+  --border: #e2e8f0;
+  --border-light: #f1f5f9;
+  
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
+  
+  --accent: #ea580c;
+  --accent-secondary: #f97316;
+  
+  --code-bg: #f8fafc;
+}
+
+[data-theme="light-soft"] {
+  --bg-base: #f4f4f5;
+  --bg-sidebar: #fafafa;
+  --bg-card: #ffffff;
+  --bg-card-elevated: #f4f4f5;
+  --bg-hover: rgba(0, 0, 0, 0.05);
+  --bg-active: rgba(234, 88, 12, 0.1);
+  
+  --border: #e4e4e7;
+  --border-light: #f4f4f5;
+  
+  --text-primary: #18181b;
+  --text-secondary: #52525b;
+  --text-muted: #a1a1aa;
+  
+  --accent: #f97316;
+  --accent-secondary: #ea580c;
+  
+  --code-bg: #f4f4f5;
+}
+
+/* 全局滚动条美化 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
