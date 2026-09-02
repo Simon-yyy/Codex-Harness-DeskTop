@@ -13,6 +13,7 @@ export interface SkillItem {
   name: string;
   description: string;
   prompt: string;
+  content?: string;
 }
 
 export interface ProviderConfig {
@@ -64,11 +65,16 @@ export interface CodexDesktopAPI {
   getAppInfo: () => Promise<AppInfo>;
   getSkills: () => Promise<SkillItem[]>;
   requestLLM: (payload: LLMRequestPayload) => Promise<LLMResponsePayload>;
+  callLlmApi?: (payload: { endpoint: string; apiKey?: string; body: any; customHeaders?: Record<string, string> }) => Promise<{ ok: boolean; status: number; statusText: string; body: string }>;
+  setTheme?: (theme: string) => void;
+  getThemes?: () => any;
+  getCurrentTheme?: () => string;
   saveTempImage: (base64Data: string) => Promise<{ success: boolean; path: string; error?: string }>;
   showItemInFolder: (filePath: string) => void;
   openExternal: (url: string) => void;
   checkForUpdates: (isSilent?: boolean) => void;
   startDownloadUpdate: (payload: { downloadUrl: string; version: string }) => void;
+  detectCoreStatus?: () => Promise<any>;
   onThemeChange: (callback: (theme: string) => void) => void;
   onMenuAction: (callback: (action: string) => void) => void;
   onSkillsSynced: (callback: (skills: SkillItem[]) => void) => void;

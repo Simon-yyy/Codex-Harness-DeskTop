@@ -1,20 +1,40 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Bot, User, ChevronDown, ChevronRight, Copy, Check, Sparkles } from 'lucide-react';
+import { Bot, User, ChevronDown, ChevronRight, Copy, Check, Sparkles, ArrowDown, Loader2 } from 'lucide-react';
 import { ChatMessage } from '@/types/session';
 
 interface ChatStreamProps {
   messages: ChatMessage[];
+  isGenerating?: boolean;
+  currentModel?: string;
   onOpenLightbox: (src: string) => void;
 }
 
-export const ChatStream: React.FC<ChatStreamProps> = ({ messages, onOpenLightbox }) => {
+export const ChatStream: React.FC<ChatStreamProps> = ({
+  messages,
+  isGenerating = false,
+  currentModel = 'gpt-5.6-sol',
+  onOpenLightbox
+}) => {
+  const containerRef = useRef<HTMLDivElement>(null);
   const streamEndRef = useRef<HTMLDivElement>(null);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   const [expandedThinking, setExpandedThinking] = useState<Record<number, boolean>>({});
+  const [showScrollBottom, setShowScrollBottom] = useState(false);
+
+  const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
+    streamEndRef.current?.scrollIntoView({ behavior });
+  };
 
   useEffect(() => {
-    streamEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    scrollToBottom(isGenerating ? 'smooth' : 'auto');
+  }, [messages, isGenerating]);
+
+  const handleScroll = () => {
+    if (!containerRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
+    const isFarFromBottom = scrollHeight - scrollTop - clientHeight > 120;
+    setShowScrollBottom(isFarFromBottom);
+  };
 
   const copyToClipboard = (text: string, idx: number) => {
     navigator.clipboard.writeText(text);
@@ -35,7 +55,11 @@ export const ChatStream: React.FC<ChatStreamProps> = ({ messages, onOpenLightbox
   };
 
   return (
-    <div className="flex-1 overflow-y-auto px-2 sm:px-4 md:px-6 py-6 space-y-6">
+    <div
+      ref={containerRef}
+      onScroll={handleScroll}
+      className="relative flex-1 overflow-y-auto px-2 sm:px-4 md:px-6 py-6 space-y-6 scroll-smooth"
+    >
       <div className="w-full max-w-5xl 2xl:max-w-6xl mx-auto space-y-6">
         {messages.length === 0 && (
           <div className="text-center py-20 text-text-muted space-y-3">
@@ -62,7 +86,6 @@ export const ChatStream: React.FC<ChatStreamProps> = ({ messages, onOpenLightbox
                   </div>
                 </div>
 
-                {/* 用户气泡 */}
                 <div className="max-w-[85%] bg-blue-600/10 dark:bg-blue-950/40 border border-blue-500/30 rounded-2xl rounded-tr-xs p-3.5 text-xs text-text-primary shadow-xs leading-relaxed break-words space-y-2">
                   {msg.images && msg.images.length > 0 && (
                     <div className="flex flex-wrap gap-2 mb-2">
@@ -89,7 +112,6 @@ export const ChatStream: React.FC<ChatStreamProps> = ({ messages, onOpenLightbox
             );
           }
 
-          // AI 消息卡片 (占满 820px 居中容器)
           return (
             <div key={idx} className="flex flex-col items-start space-y-2 animate-fadeIn w-full">
               <div className="flex items-center gap-2 text-xs">
@@ -105,7 +127,6 @@ export const ChatStream: React.FC<ChatStreamProps> = ({ messages, onOpenLightbox
               </div>
 
               <div className="w-full bg-bg-card border border-border rounded-xl p-4 shadow-sm space-y-3">
-                {/* 思考过程 Accordion */}
                 {msg.thinking && (
                   <div className="border border-border/80 rounded-lg overflow-hidden bg-bg-sidebar/50">
                     <button
@@ -126,12 +147,10 @@ export const ChatStream: React.FC<ChatStreamProps> = ({ messages, onOpenLightbox
                   </div>
                 )}
 
-                {/* 正文内容 */}
                 <div className="text-xs text-text-primary leading-relaxed whitespace-pre-wrap break-words">
                   {msg.content}
                 </div>
 
-                {/* 卡片底部操作栏 */}
                 <div className="flex items-center justify-between pt-2 border-t border-border-light text-[11px] text-text-muted">
                   <span>{new Date(msg.timestamp).toLocaleTimeString()}</span>
                   <button
@@ -147,8 +166,50 @@ export const ChatStream: React.FC<ChatStreamProps> = ({ messages, onOpenLightbox
             </div>
           );
         })}
+
+        {isGenerating && (
+          <div className="flex flex-col items-start space-y-1.5 animate-fadeIn">
+            <div className="flex items-center gap-2 text-xs text-text-muted font-medium">
+              <div className="w-5 h-5 rounded-full bg-accent/20 text-accent flex items-center justify-center text-[10px] animate-pulse">
+                <Bot size={12} />
+              </div>
+              <span className="font-semibold text-text-primary">Codex Agent</span>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-accent/15 text-accent border border-accent/30 flex items-center gap-1">
+                <Loader2 size={10} className="animate-spin" />
+                {currentModel}
+              </span>
+            </div>
+            <div className="w-full bg-bg-card border border-accent/40 rounded-xl p-4 shadow-sm space-y-2.5">
+              <div className="flex items-center gap-2.5 text-xs text-text-secondary">
+                <div className="flex gap-1 items-center">
+                  <span className="w-2 h-2 rounded-full bg-accent animate-ping" />
+                  <span className="w-2 h-2 rounded-full bg-accent/70 animate-bounce" />
+                  <span className="w-2 h-2 rounded-full bg-accent/40 animate-pulse" />
+                </div>
+                <span className="font-medium text-text-primary">
+                  正在深度思考并实时组织回复中...
+                </span>
+              </div>
+              <div className="h-1.5 w-full bg-bg-base rounded-full overflow-hidden">
+                <div className="h-full bg-gradient-to-r from-accent to-accent-secondary w-2/3 rounded-full animate-pulse" />
+              </div>
+            </div>
+          </div>
+        )}
+
         <div ref={streamEndRef} />
       </div>
+
+      {showScrollBottom && (
+        <button
+          onClick={() => scrollToBottom('smooth')}
+          className="fixed bottom-24 right-8 z-30 p-2.5 bg-bg-card-elevated hover:bg-accent hover:text-white border border-border shadow-lg rounded-full text-text-secondary transition-all transform hover:scale-110 flex items-center gap-1.5 text-xs group"
+          title="回到底部最新消息"
+        >
+          <ArrowDown size={14} className="group-hover:translate-y-0.5 transition-transform" />
+          <span className="font-medium pr-1">回到底部</span>
+        </button>
+      )}
     </div>
   );
 };

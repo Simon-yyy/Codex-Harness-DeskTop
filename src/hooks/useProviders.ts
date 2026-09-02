@@ -5,6 +5,7 @@ export const DEFAULT_PROVIDER_PRESETS: ProviderPreset[] = [
   {
     id: 'openai',
     name: 'OpenAI 官方',
+    protocol: 'openai',
     type: 'openai',
     baseUrl: 'https://api.openai.com/v1',
     apiKey: '',
@@ -13,6 +14,7 @@ export const DEFAULT_PROVIDER_PRESETS: ProviderPreset[] = [
   {
     id: 'anthropic',
     name: 'Anthropic 官方 (Claude)',
+    protocol: 'anthropic',
     type: 'anthropic',
     baseUrl: 'https://api.anthropic.com/v1',
     apiKey: '',
@@ -21,6 +23,7 @@ export const DEFAULT_PROVIDER_PRESETS: ProviderPreset[] = [
   {
     id: 'deepseek',
     name: 'DeepSeek 官方',
+    protocol: 'openai',
     type: 'openai',
     baseUrl: 'https://api.deepseek.com/v1',
     apiKey: '',
@@ -29,6 +32,7 @@ export const DEFAULT_PROVIDER_PRESETS: ProviderPreset[] = [
   {
     id: 'ollama',
     name: 'Ollama 本地内核',
+    protocol: 'ollama',
     type: 'ollama',
     baseUrl: 'http://127.0.0.1:11434',
     apiKey: 'ollama',
@@ -37,6 +41,7 @@ export const DEFAULT_PROVIDER_PRESETS: ProviderPreset[] = [
   {
     id: 'agentrouter',
     name: 'AgentRouter 聚合管道',
+    protocol: 'openai',
     type: 'openai',
     baseUrl: 'https://api.agentrouter.org/v1',
     apiKey: '',
@@ -45,6 +50,7 @@ export const DEFAULT_PROVIDER_PRESETS: ProviderPreset[] = [
   {
     id: 'custom',
     name: '自定义 OpenAI 兼容接口',
+    protocol: 'openai',
     type: 'custom',
     baseUrl: 'https://api.openai.com/v1',
     apiKey: '',
@@ -62,73 +68,73 @@ export function parseModelList(rawModels: string): string[] {
 }
 
 export function normalizeAndDeduplicateProviders(rawList: any[]): ProviderPreset[] {
-  const canonicalMap: Record<string, ProviderPreset> = {};
-
-  // 初始化 5 大官方核心服务商基准
-  DEFAULT_PROVIDER_PRESETS.forEach(def => {
-    canonicalMap[def.id] = { ...def, models: def.models };
-  });
-
-  const customList: ProviderPreset[] = [];
-
-  if (Array.isArray(rawList)) {
-    rawList.forEach(item => {
-      if (!item) return;
-      const name = String(item.name || '').toLowerCase();
-      const id = String(item.id || '').toLowerCase();
-      const baseUrl = String(item.baseUrl || '').toLowerCase();
-      const itemApiKey = (item.apiKey || '').trim();
-      const itemModels = parseModelList(item.models || '');
-
-      let targetKey: string | null = null;
-
-      if (id === 'openai' || name.includes('openai') || baseUrl.includes('openai.com')) {
-        targetKey = 'openai';
-      } else if (id === 'anthropic' || name.includes('anthropic') || name.includes('claude') || baseUrl.includes('anthropic.com')) {
-        targetKey = 'anthropic';
-      } else if (id === 'deepseek' || name.includes('deepseek') || baseUrl.includes('deepseek.com')) {
-        targetKey = 'deepseek';
-      } else if (id === 'ollama' || name.includes('ollama') || baseUrl.includes('11434')) {
-        targetKey = 'ollama';
-      } else if (id === 'agentrouter' || name.includes('agent router') || name.includes('agentrouter') || name.includes('glm') || baseUrl.includes('agentrouter')) {
-        targetKey = 'agentrouter';
-      }
-
-      if (targetKey && canonicalMap[targetKey]) {
-        // 智能合并 API Key (若历史记录中填了 Key，予以保留)
-        if (itemApiKey && (!canonicalMap[targetKey].apiKey || canonicalMap[targetKey].apiKey === 'ollama')) {
-          canonicalMap[targetKey].apiKey = itemApiKey;
-        }
-        if (item.baseUrl && !canonicalMap[targetKey].baseUrl) {
-          canonicalMap[targetKey].baseUrl = item.baseUrl;
-        }
-        // 智能合并模型列表去重
-        const existingModels = parseModelList(canonicalMap[targetKey].models);
-        itemModels.forEach(m => {
-          if (!existingModels.some(em => em.toLowerCase() === m.toLowerCase())) {
-            existingModels.push(m);
-          }
-        });
-        canonicalMap[targetKey].models = existingModels.join(', ');
-      } else if (item.isCustom || (!targetKey && item.name)) {
-        // 真正的独立自定义提供方
-        const existIdx = customList.findIndex(c => c.id === item.id || c.name === item.name);
-        if (existIdx === -1) {
-          customList.push({
-            id: item.id || ('custom_' + Math.random().toString(36).slice(2, 7)),
-            name: item.name || '自定义提供方',
-            type: item.type || 'custom',
-            baseUrl: item.baseUrl || 'https://api.openai.com/v1',
-            apiKey: itemApiKey,
-            models: item.models || 'custom-model',
-            isCustom: true
-          });
-        }
-      }
-    });
+  if (!Array.isArray(rawList) || rawList.length === 0) {
+    return DEFAULT_PROVIDER_PRESETS;
   }
 
-  return [...Object.values(canonicalMap), ...customList];
+  const result: ProviderPreset[] = [];
+  const seenIds = new Set<string>();
+
+  rawList.forEach((item) => {
+    if (!item) return;
+    const id = String(item.id || ('prov_' + Math.random().toString(36).slice(2, 7)));
+    if (seenIds.has(id)) return;
+    seenIds.add(id);
+
+    const name = String(item.name || '未命名服务商');
+    const baseUrl = String(item.baseUrl || 'https://api.openai.com/v1');
+    const apiKey = String(item.apiKey || '');
+    const models = String(item.models || 'gpt-5.6-sol');
+
+    let protocol = item.protocol;
+    if (!protocol) {
+      if (id === 'anthropic' || name.toLowerCase().includes('anthropic') || name.toLowerCase().includes('claude')) {
+        protocol = 'anthropic';
+      } else if (id === 'ollama' || baseUrl.includes('11434')) {
+        protocol = 'ollama';
+      } else {
+        protocol = 'openai';
+      }
+    }
+
+    const modelNameList = parseModelList(models);
+    const existingConfigs: Record<string, any> = {};
+    if (Array.isArray(item.modelConfigs)) {
+      item.modelConfigs.forEach((cfg: any) => {
+        if (cfg && cfg.name) {
+          existingConfigs[cfg.name.toLowerCase()] = cfg;
+        }
+      });
+    }
+
+    const modelConfigs = modelNameList.map(name => {
+      const exist = existingConfigs[name.toLowerCase()];
+      return {
+        id: exist?.id || name,
+        name: name,
+        displayName: exist?.displayName || name,
+        protocol: exist?.protocol,
+        baseUrl: exist?.baseUrl,
+        apiKey: exist?.apiKey,
+        temperature: exist?.temperature,
+        maxTokens: exist?.maxTokens
+      };
+    });
+
+    result.push({
+      id,
+      name,
+      protocol,
+      type: item.type || (item.isCustom ? 'custom' : 'openai'),
+      baseUrl,
+      apiKey,
+      models,
+      modelConfigs,
+      isCustom: Boolean(item.isCustom)
+    });
+  });
+
+  return result.length > 0 ? result : DEFAULT_PROVIDER_PRESETS;
 }
 
 export function useProviders() {
@@ -137,14 +143,12 @@ export function useProviders() {
       const saved = localStorage.getItem('dsh_providers_config');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          const normalized = normalizeAndDeduplicateProviders(parsed);
-          localStorage.setItem('dsh_providers_config', JSON.stringify(normalized));
-          return normalized;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return normalizeAndDeduplicateProviders(parsed);
         }
       }
     } catch (e) {
-      console.error(e);
+      console.error('[useProviders] load failed:', e);
     }
     return DEFAULT_PROVIDER_PRESETS;
   });
@@ -155,7 +159,11 @@ export function useProviders() {
 
   const saveProviders = (newProviders: ProviderPreset[]) => {
     setProviders(newProviders);
-    localStorage.setItem('dsh_providers_config', JSON.stringify(newProviders));
+    try {
+      localStorage.setItem('dsh_providers_config', JSON.stringify(newProviders));
+    } catch (e) {
+      console.error('[useProviders] save failed:', e);
+    }
   };
 
   const selectModel = (model: string) => {
@@ -163,17 +171,21 @@ export function useProviders() {
     localStorage.setItem('codex_current_selected_model', model);
   };
 
-  // 提取所有可用模型选项
+  // 提取所有可用模型选项 (携带专属覆盖配置与所属服务商)
   const allModels: ModelOption[] = [];
   providers.forEach(p => {
     const models = parseModelList(p.models);
     models.forEach(m => {
+      const modelCfg = (p.modelConfigs || []).find(c => c.name.toLowerCase() === m.toLowerCase());
       if (!allModels.some(opt => opt.value.toLowerCase() === m.toLowerCase())) {
         allModels.push({
           value: m,
-          text: m,
+          text: modelCfg?.displayName || m,
           providerId: p.id,
-          providerName: p.name
+          providerName: p.name,
+          protocol: modelCfg?.protocol || p.protocol || 'openai',
+          baseUrl: modelCfg?.baseUrl || p.baseUrl,
+          apiKey: modelCfg?.apiKey || p.apiKey
         });
       }
     });

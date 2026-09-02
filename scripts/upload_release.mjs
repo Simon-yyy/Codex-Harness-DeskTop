@@ -95,9 +95,12 @@ async function upload() {
   const uploadUrlTemplate = release.upload_url.replace(/\{(\?.*)?\}$/, '');
 
   for (const item of filesToUpload) {
-    if (existingNames.has(item.name)) {
-      console.log(`✓ 资产已存在，跳过: ${item.name}`);
-      continue;
+    const existingAsset = (release.assets || []).find(a => a.name === item.name);
+    if (existingAsset) {
+      await fetchWithRetry(`https://api.github.com/repos/${OWNER}/${REPO}/releases/assets/${existingAsset.id}`, {
+        method: 'DELETE',
+        headers
+      });
     }
 
     if (!fs.existsSync(item.filePath)) {

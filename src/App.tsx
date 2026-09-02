@@ -162,46 +162,98 @@ export const App: React.FC = () => {
     addMessageToCurrentSession(userMsg);
 
     try {
-      // 查找当前所选模型归属的提供方
+      // 查找当前所选模型归属的提供方及模型专属配置
       const matchedModel = allModels.find(m => m.value.toLowerCase() === selectedModel.toLowerCase());
       const providerId = matchedModel?.providerId || 'openai';
       const provider = providers.find(p => p.id === providerId) || providers[0];
 
-      let response;
-      if (window.codexDesktop && window.codexDesktop.requestLLM) {
-        // 构建请求上下文 (若装载了技能，将技能完整工作流作为最高优先级 System Prompt 注入)
-        const contextMessages: { role: 'user' | 'assistant' | 'system'; content: string }[] = [];
+      // 获取请求配置 (模型专属配置优先)
+      const effectiveProtocol = matchedModel?.protocol || provider.protocol || 'openai';
+      let effectiveBaseUrl = (matchedModel?.baseUrl || provider.baseUrl || 'https://api.openai.com/v1').trim().replace(/\/+$/, '');
+      const effectiveApiKey = (matchedModel?.apiKey || provider.apiKey || '').trim();
 
-        if (activeSkill) {
-          contextMessages.push({
-            role: 'system',
-            content: `【CODEX 技能已激活: ${activeSkill.name}】\n技能描述: ${activeSkill.description}\n\n=== 技能执行原则与规范 (SKILL.md) ===\n${activeSkill.prompt || activeSkill.content}\n\n请严格按照上述技能的标准和步骤执行。`
-          });
+      // 构建请求上下文 (若装载了技能，将技能完整工作流作为最高优先级 System Prompt 注入)
+      const contextMessages: { role: 'user' | 'assistant' | 'system'; content: string }[] = [];
+
+      if (activeSkill) {
+        contextMessages.push({
+          role: 'system',
+          content: `【CODEX 技能已激活: ${activeSkill.name}】\n技能描述: ${activeSkill.description}\n\n=== 技能执行原则与规范 (SKILL.md) ===\n${activeSkill.prompt || activeSkill.content || ''}\n\n请严格按照上述技能的标准和步骤执行。`
+        });
+      }
+
+      (currentSession.messages || []).slice(-10).forEach(m => {
+        contextMessages.push({
+          role: m.role,
+          content: m.content
+        });
+      });
+
+      contextMessages.push({ role: 'user', content: actualUserPrompt });
+
+      let response: { content?: string; thinking?: string; toolCall?: any } | null = null;
+
+      if (window.codexDesktop && window.codexDesktop.callLlmApi) {
+        let endpoint = effectiveBaseUrl;
+        let body: any = {};
+
+        if (effectiveProtocol === 'anthropic') {
+          if (!endpoint.endsWith('/messages')) endpoint += '/v1/messages';
+          body = {
+            model: selectedModel,
+            max_tokens: 4096,
+            messages: contextMessages.filter(m => m.role !== 'system'),
+            system: contextMessages.find(m => m.role === 'system')?.content
+          };
+        } else if (effectiveProtocol === 'ollama') {
+          if (!endpoint.endsWith('/chat/completions') && !endpoint.endsWith('/api/chat')) {
+            endpoint += '/v1/chat/completions';
+          }
+          body = {
+            model: selectedModel,
+            messages: contextMessages
+          };
+        } else {
+          // OpenAI 兼容协议 (支持 DeepSeek, GLM, OpenAI 等)
+          if (!endpoint.endsWith('/chat/completions')) {
+            endpoint += '/chat/completions';
+          }
+          body = {
+            model: selectedModel,
+            messages: contextMessages
+          };
         }
 
-        (currentSession.messages || []).slice(-10).forEach(m => {
-          contextMessages.push({
-            role: m.role,
-            content: m.content
-          });
+        const rawRes: any = await window.codexDesktop.callLlmApi({
+          endpoint,
+          apiKey: effectiveApiKey,
+          body
         });
 
-        contextMessages.push({ role: 'user', content: actualUserPrompt });
-
-        response = await window.codexDesktop.requestLLM({
-          providerId: provider.id,
-          model: selectedModel,
-          baseUrl: provider.baseUrl,
-          apiKey: provider.apiKey,
-          messages: contextMessages
-        });
+        if (rawRes && rawRes.ok) {
+          const parsed = typeof rawRes.body === 'string' ? JSON.parse(rawRes.body) : rawRes.body;
+          if (effectiveProtocol === 'anthropic') {
+            const text = (parsed.content || []).map((c: any) => c.text || '').join('');
+            const thinking = (parsed.content || []).filter((c: any) => c.type === 'thinking').map((c: any) => c.thinking).join('\n');
+            response = { content: text, thinking };
+          } else {
+            const choice = parsed.choices?.[0];
+            const text = choice?.message?.content || parsed.message?.content || parsed.response || '';
+            const thinking = choice?.message?.reasoning_content || choice?.message?.reasoning || '';
+            response = { content: text, thinking };
+          }
+        } else {
+          let errText = rawRes?.body;
+          if (typeof errText === 'object') errText = JSON.stringify(errText);
+          throw new Error(errText || rawRes?.statusText || `HTTP ${rawRes?.status || 500}`);
+        }
       }
 
       const assistantMsg: ChatMessage = {
         role: 'assistant',
         model: selectedModel,
         thinking: response?.thinking || (activeSkill ? `🧠 技能【${activeSkill.name}】已激活并执行。` : '任务思考已完成。'),
-        content: response?.content || response?.text || '⚠️ 未收到有效模型回复或当前未配置 API Key。请在【模型配置】中配置对应的 API Key。',
+        content: response?.content || '⚠️ 未收到有效模型回复，请检查 Base URL 与 API Key 是否正确。',
         toolCall: response?.toolCall,
         timestamp: Date.now()
       };
@@ -277,6 +329,8 @@ export const App: React.FC = () => {
           {/* 消息流视图 */}
           <ChatStream
             messages={currentSession.messages}
+            isGenerating={isGenerating}
+            currentModel={selectedModel}
             onOpenLightbox={(src) => setLightboxImg(src)}
           />
 
