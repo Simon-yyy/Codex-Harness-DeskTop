@@ -1,30 +1,101 @@
-﻿# Codex Desktop ⚡
+# Codex Desktop ⚡
 
 > OpenAI Codex Harness 现代化、原生多模态、零配置门槛的工业级桌面端客户端。
+
+[![Electron](https://img.shields.io/badge/Electron-33.4.11-47848F?logo=electron&logoColor=white)](https://electronjs.org/)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Skills Armed](https://img.shields.io/badge/Skills-43%20Armed-orange.svg)](#-43-项全流程工业级与-loop-工程技能)
+[![Codex CLI](https://img.shields.io/badge/Codex%20CLI-v0.152.1%20Aligned-green.svg)](#-官方标准与前沿模型矩阵)
 
 ---
 
 ## 🌟 核心特性与亮点
 
-1. **⚡ 内置 35 个全流程工业级 AI 编程技能 (Matt Pocock Skills)**：
-   - 内置 TDD 测试驱动、系统调试 (Systematic Debugging)、代码审查 (Review)、深层模块设计、领域建模等全套技能体系，首次启动自动部署。
-2. **🎨 4 款 VS Code 彬哥经典极客美学配色**：
-   - 包含 `escook Dark` (经典暗黑)、`Dark Soft` (柔和暗黑)、`Light` (经典紫韵浅色)、`Light Soft` (柔和浅色)，一键毫秒级即时热切换。
-3. **🛡️ 进程生命周期强守护 (0 端口残留)**：
-   - 随窗口关闭 100% 销毁后台子进程，后台命令行调用静默无黑框。
-4. **🚀 应用内全自动流式下载升级**：
-   - 一键检查更新并在应用内无缝下载安装升级。
+### 1. ⚡ 内置 43 项全流程工业级与 Loop 工程技能
+- **Matt Pocock 35 项工业级技能**：涵盖 TDD 测试驱动、系统调试 (Diagnosing Bugs)、代码审查 (Code Review)、深层模块设计 (Codebase Design)、领域建模、Git 安全护栏等。
+- **Loop Engineering 8 大循环工程技能**：涵盖 Loop 三要素设计、Loop 价值判断、目标验证 (Goal Verification)、5+1 架构审计、Maker-Checker 独立审查员、认知风险管理 (Comprehension Gap) 等。
+- **首次启动自动热部署**：自动增量同步至用户目录 `~/.codex/skills/`，随时通过 `/` 快捷调用。
+
+### 2. ⏳ 原生 Tab Queueing (指令队列流水线)
+- **非阻塞多任务交互**：在 Agent 思考中或流式生成代码时，用户可继续输入后续指令，系统自动进入排队队列并在界面显示 `⏳ 指令排队中` 胶囊。
+- **自动流水线调度**：当前轮次任务执行完成后，系统自动出队并无缝执行下一条指令。
+
+### 3. ⌨️ 官方常用 Slash Commands 快捷交互
+- 支持输入 `/` 呼出快捷指令浮层：
+  - `/status`：实时探测 Codex CLI 内核 (`v0.152.1`)、43 项装载技能与环境运行状态。
+  - `/diff`：实时查看工作区代码与状态变更摘要。
+  - `/skills`：展开侧边栏技能库面板并快速筛选。
+  - `/clear`：优雅清空当前会话历史。
+  - `/help`：调出快捷指令帮助文档。
+
+### 4. 🧠 2026 旗舰大模型矩阵与双协议自适应
+- **OpenAI 官方首选**：`gpt-5.6-sol`、`gpt-5.4`、`gpt-5.4-mini`、`gpt-5.5`、`o3-mini`、`o1`。
+- **Anthropic 混合推理**：`claude-3-7-sonnet` (支持原生 Thinking 深度思考过程折叠)。
+- **DeepSeek 旗舰**：`deepseek-reasoner` (R1 推理)、`deepseek-chat` (V3)。
+- **本地离线模型**：一键直连本地 Ollama (`llama3.3`, `qwen2.5-coder`, `deepseek-r1:7b`)。
+
+### 5. 🎨 4 款 VS Code 经典极客高对比度美学配色
+- 内置 `escook Dark` (经典暗黑)、`Dark Soft` (柔和暗黑)、`Light` (经典暖调浅色)、`Light Soft` (柔和浅色)，支持菜单与全局快捷键毫秒级热切换。
+
+### 6. 🖼️ 原生多模态剪贴板图片拦截与拖拽
+- 支持 `Ctrl+V` 直接从剪贴板粘贴截图或拖拽多格式文件，提供多模态缩略图管理与视觉直接分析。
+
+### 7. 🛡️ 进程生命周期强守护与双轨全自动更新
+- 随窗口关闭 100% 销毁后台子进程，确保 **0 端口残留**，后台调用静默无黑框。
+- 集成 GitHub Releases 流式自动更新检查、无感下载与一键无缝重启升级。
 
 ---
 
-## 📦 快速开始
+## 📂 项目结构概览
 
+```
+codex-desktop/
+├── main.js                  # Electron 主进程：窗口管理、原生中文菜单、自动更新流、IPC 管道、技能热同步
+├── preload.js               # 安全预加载脚本：上下文隔离桥梁、主题引擎注入、原生剪贴板拦截
+├── ui/                      # 渲染进程前端工作台
+│   ├── index.html           # 界面骨架：侧边栏(会话/文件/技能)、消息流、排队指示条、Composer输入区
+│   ├── style.css            # 现代美学设计系统：CSS 变量、4 套高对比度主题、微动效与响应式布局
+│   └── app.js               # 核心渲染逻辑：会话持久化、Tab Queueing 调度、Slash 指令系统、大模型请求解析
+├── .agents/skills/          # 内置 43 项全流程工业级与 Loop Engineering 技能库 (启动时自动增量部署)
+├── scripts/
+│   ├── release.mjs          # 发版流水线：SHA-256 校验、版本产物自动归档至 release/v<version>/、发布说明生成
+│   └── upload_release.mjs   # GitHub Releases 自动化上传脚本
+├── tests/                   # 16 大 Seam 边界全自动化 TDD 测试套件
+│   ├── run-all-tests.mjs    # 主测试执行器 (57 项全量单元与集成断言)
+│   ├── renderer-behavior.test.mjs # 渲染层 VM + DOM 桩行为测试
+│   └── reply-parsing.test.mjs     # LLM 响应解析与防 HTML 误判测试
+├── release/                 # 发布产物与安装包归档目录
+└── contexts/
+    └── context.md           # 精简上下文地图与领域模型
+```
+
+---
+
+## 📦 快速开始与开发指令
+
+### 1. 启动本地调试
 ```bash
-# 启动开发模式
 npm start
+```
 
-# 构建安装包
+### 2. 执行自动化测试 (16 Seams / 57 Tests)
+```bash
+npm test
+```
+
+### 3. 构建 NSIS 独立安装包
+```bash
 npm run build
+```
+
+### 4. 发版归档与 SHA-256 校验
+```bash
+npm run release
+```
+
+### 5. 交付物证核验 (Harness Gate)
+```bash
+agent-verify
 ```
 
 ---

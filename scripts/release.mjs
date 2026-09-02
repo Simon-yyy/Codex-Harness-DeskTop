@@ -67,15 +67,16 @@ async function main() {
 ---
 
 ## 🌟 核心特性与更新 (Changelog)
-- 🚀 **基于 OpenAI Codex Harness** 现代化、原生多模态、零配置门槛工业级工作台
+- 🚀 **对齐官方 Codex CLI v0.152.1 内核标准** 与多通道状态探测
+- ⏳ **原生 Tab Queueing 指令排队执行流水线**：Agent 执行中连续排队派发任务并在完成后自动流水线执行
+- ⚡ **内置 43 个全流程工业级与 Loop Engineering 技能** (含 Loop 三要素、目标验证、5+1架构、Maker-Checker、Comprehension Gap 等)
+- 🧠 **2026 旗舰大模型矩阵** (首选 gpt-5.6-sol、gpt-5.4-mini、claude-3-7-sonnet 混合思考、deepseek-reasoner)
+- ⌨️ **官方常用 Slash Commands 交互系统** (/status, /diff, /skills, /clear, /help)
 - 🔄 **双轨全自动更新体系** (开机静默检测、优雅更新横条、实时流式下载进度与一键无缝重启升级)
-- ⚡ **内置 43 个全流程工业级与 Loop Engineering 技能** (含 Loop 三要素、价值判断、目标验证、5+1架构等)
-- 🧠 **内置前沿模型支持** (支持 GPT-5.4、GPT-5.5、GPT-5.3-Codex、Claude、DeepSeek 等)
-- 🛡️ **官方 Rust 内核状态适配器** (自适应探测系统与本地沙箱中的 Codex Core Daemon)
 - 🎨 **官方专业质感图标**：白底圆角矩形 + 经典墨黑 OpenAI / Codex 官方徽标
 - 💬 **响应式会话管理系统**：支持 + 新建会话、多会话历史切换、无损恢复与跨会话持久化
 - 🖼️ **原生多模态剪贴板图片拦截** (Ctrl+V) 与文件上传，模型直接看图编程
-- 🎨 **内置 VS Code 4 款经典高对比度美学配色** 与即时热切换（彻底消除文字淹没）
+- 🎨 **内置 VS Code 4 款经典高对比度美学配色** 与即时热切换
 - 🛡️ **进程生命周期强守护** (0 端口残留)，静默无黑框运行
 `;
 

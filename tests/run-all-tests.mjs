@@ -360,6 +360,75 @@ runTest("main.js: HTTPS 流式更新与 User-Agent 头完整", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Seam 14: 官方内核版本与 CLI 对齐 (v0.152.1)
+// ═══════════════════════════════════════════════════════════════════════════
+process.stdout.write("\n═══ Seam 14: 官方内核版本与 CLI 对齐 (v0.152.1) ═══\n");
+
+runTest("main.js: detect-core-status 包含官方最新 v0.152.1 基准", () => {
+  const mainJs = fs.readFileSync(path.join(rootDir, "main.js"), "utf8");
+  assert.ok(mainJs.includes("latestAvailable: \"v0.152.1\""));
+  assert.ok(mainJs.includes("detect-core-status"));
+});
+
+runTest("ui/app.js: PROVIDER_PRESETS 包含 2026 旗舰大模型矩阵 (gpt-5.6-sol, gpt-5.4-mini, claude-3-7-sonnet)", () => {
+  const appJs = fs.readFileSync(path.join(rootDir, "ui", "app.js"), "utf8");
+  assert.ok(appJs.includes("gpt-5.6-sol"));
+  assert.ok(appJs.includes("gpt-5.4-mini"));
+  assert.ok(appJs.includes("claude-3-7-sonnet"));
+  assert.ok(appJs.includes("deepseek-reasoner"));
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Seam 15: Tab Queueing 指令排队执行流水线 (2026 官方特性)
+// ═══════════════════════════════════════════════════════════════════════════
+process.stdout.write("\n═══ Seam 15: Tab Queueing 指令排队执行流水线 ═══\n");
+
+runTest("ui/index.html: 包含 queued-instructions-bar 排队指示容器与计数器", () => {
+  const html = fs.readFileSync(path.join(rootDir, "ui", "index.html"), "utf8");
+  assert.ok(html.includes("queued-instructions-bar"));
+  assert.ok(html.includes("queued-count"));
+  assert.ok(html.includes("queued-items-list"));
+});
+
+runTest("ui/app.js: 包含 renderQueuedInstructions 与 executeNextQueuedInstruction 调度状态机", () => {
+  const appJs = fs.readFileSync(path.join(rootDir, "ui", "app.js"), "utf8");
+  assert.ok(appJs.includes("renderQueuedInstructions"));
+  assert.ok(appJs.includes("executeNextQueuedInstruction"));
+  assert.ok(appJs.includes("queuedInstructions"));
+});
+
+runTest("ui/style.css: 包含 .queued-instructions-bar 与 .queued-item-chip 视觉样式", () => {
+  const css = fs.readFileSync(path.join(rootDir, "ui", "style.css"), "utf8");
+  assert.ok(css.includes(".queued-instructions-bar"));
+  assert.ok(css.includes(".queued-item-chip"));
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Seam 16: 官方 Slash Commands 交互系统
+// ═══════════════════════════════════════════════════════════════════════════
+process.stdout.write("\n═══ Seam 16: 官方 Slash Commands 交互系统 ═══\n");
+
+runTest("ui/index.html: 包含 slash-commands-popover 快捷菜单", () => {
+  const html = fs.readFileSync(path.join(rootDir, "ui", "index.html"), "utf8");
+  assert.ok(html.includes("slash-commands-popover"));
+  assert.ok(html.includes("data-cmd=\"/status\""));
+  assert.ok(html.includes("data-cmd=\"/diff\""));
+  assert.ok(html.includes("data-cmd=\"/skills\""));
+  assert.ok(html.includes("data-cmd=\"/clear\""));
+  assert.ok(html.includes("data-cmd=\"/help\""));
+});
+
+runTest("ui/app.js: handleSlashCommand 完整覆盖 /status, /diff, /skills, /clear, /help", () => {
+  const appJs = fs.readFileSync(path.join(rootDir, "ui", "app.js"), "utf8");
+  assert.ok(appJs.includes("handleSlashCommand"));
+  assert.ok(appJs.includes('lower === "/status"'));
+  assert.ok(appJs.includes('lower === "/diff"'));
+  assert.ok(appJs.includes('lower === "/skills"'));
+  assert.ok(appJs.includes('lower === "/clear"'));
+  assert.ok(appJs.includes('lower === "/help"'));
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // 测试汇总
 // ═══════════════════════════════════════════════════════════════════════════
 console.log("\n╔══════════════════════════════════════════════════════════════╗");

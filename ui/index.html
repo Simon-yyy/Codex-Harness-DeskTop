@@ -115,6 +115,15 @@
 
       <!-- 底部 Composer 输入区 (固定在视野底部) -->
       <footer class="composer-container">
+        <!-- 待执行指令排队队列 (Tab Queueing 官方特性) -->
+        <div id="queued-instructions-bar" class="queued-instructions-bar" style="display: none;">
+          <div class="queued-bar-header">
+            <span class="queued-badge">⏳ 指令排队中 (<span id="queued-count">0</span>)</span>
+            <span class="queued-desc">当前任务执行完毕后将自动流水线执行</span>
+          </div>
+          <div class="queued-items-list" id="queued-items-list"></div>
+        </div>
+
         <div id="image-preview-bar" class="image-preview-bar" style="display: none;"></div>
 
         <div class="composer-card">
@@ -128,7 +137,32 @@
             </div>
           </div>
 
-          <textarea id="composer-input" placeholder="描述需求、架构或重构方案，或直接 Ctrl+V 粘贴图片进行多模态视觉分析..." rows="3"></textarea>
+          <div class="composer-input-wrapper" style="position: relative;">
+            <textarea id="composer-input" placeholder="描述需求、架构或输入 /status, /diff, /skills, /help，Agent 运行时支持无缝排队..." rows="3"></textarea>
+            <!-- 快捷 Slash 指令浮层 -->
+            <div id="slash-commands-popover" class="slash-commands-popover" style="display: none;">
+              <div class="slash-cmd-item" data-cmd="/status">
+                <span class="slash-cmd-name">/status</span>
+                <span class="slash-cmd-desc">查看 Codex CLI 内核 (v0.152.1) 与 43 项技能状态</span>
+              </div>
+              <div class="slash-cmd-item" data-cmd="/diff">
+                <span class="slash-cmd-name">/diff</span>
+                <span class="slash-cmd-desc">查看当前项目工作区代码与文件变更摘要</span>
+              </div>
+              <div class="slash-cmd-item" data-cmd="/skills">
+                <span class="slash-cmd-name">/skills</span>
+                <span class="slash-cmd-desc">展开 43 项工程技能库与快速筛选</span>
+              </div>
+              <div class="slash-cmd-item" data-cmd="/clear">
+                <span class="slash-cmd-name">/clear</span>
+                <span class="slash-cmd-desc">清空当前会话历史消息</span>
+              </div>
+              <div class="slash-cmd-item" data-cmd="/help">
+                <span class="slash-cmd-name">/help</span>
+                <span class="slash-cmd-desc">查看所有支持的 Codex 快捷指令与操作说明</span>
+              </div>
+            </div>
+          </div>
 
           <div class="composer-footer">
             <div class="composer-hints">
@@ -317,7 +351,7 @@
         <div class="about-hero">
           <div class="hero-logo-box"><div class="hero-logo">CX</div></div>
           <h4>Codex Desktop Harness</h4>
-          <p id="about-version">版本: v1.0.1 (Windows x64)</p>
+          <p id="about-version">版本: v1.0.2 (Windows x64)</p>
         </div>
         <p class="about-desc">面向工业级开发者的全能 AI 编程工作台，支持原生多模态视觉、多模型 Provider 实时切换与 43 项工业级及循环工程技能。</p>
         <div class="about-skills-section">
@@ -344,6 +378,14 @@
           <button class="btn-secondary" id="btn-check-updates">检查更新...</button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Image Lightbox Modal (大图灯箱预览) -->
+  <div class="modal-backdrop" id="modal-image-lightbox" style="display: none; z-index: 99999; background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(8px);">
+    <div style="position: relative; max-width: 90vw; max-height: 90vh; display: flex; align-items: center; justify-content: center;">
+      <button type="button" id="btn-close-lightbox" style="position: absolute; top: -40px; right: 0; background: rgba(255, 255, 255, 0.2); border: none; color: #ffffff; font-size: 20px; width: 32px; height: 32px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center;">✕</button>
+      <img id="lightbox-img" src="" alt="预览大图" style="max-width: 90vw; max-height: 85vh; border-radius: 8px; object-fit: contain; box-shadow: 0 20px 50px rgba(0,0,0,0.5);">
     </div>
   </div>
 

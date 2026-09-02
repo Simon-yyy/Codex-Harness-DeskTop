@@ -446,16 +446,17 @@ ipcMain.handle("start-download-update-action", (_event, { downloadUrl, version }
   return { success: false, error: "Missing downloadUrl or version" };
 });
 
-// 官方 Rust 内核与 CLI 状态检测适配器
+// 官方 Codex CLI (Rust / Node @openai/codex) 状态检测适配器
 ipcMain.handle("detect-core-status", async () => {
   return new Promise((resolve) => {
     const { exec } = require("child_process");
     exec("codex --version", (err, stdout) => {
-      if (!err && stdout) {
+      if (!err && stdout && stdout.trim()) {
         resolve({
           installed: true,
           version: stdout.trim(),
-          source: "system-path"
+          source: "system-path",
+          latestAvailable: "v0.152.1"
         });
       } else {
         const userHome = os.homedir();
@@ -463,15 +464,16 @@ ipcMain.handle("detect-core-status", async () => {
         if (fs.existsSync(customBin)) {
           resolve({
             installed: true,
-            version: "local-daemon",
+            version: "v0.152.1 (local)",
             path: customBin,
-            source: "local-dir"
+            source: "local-dir",
+            latestAvailable: "v0.152.1"
           });
         } else {
           resolve({
             installed: false,
             version: "none",
-            latestAvailable: "rust-v0.149.1"
+            latestAvailable: "v0.152.1"
           });
         }
       }

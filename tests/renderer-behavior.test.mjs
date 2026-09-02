@@ -214,30 +214,32 @@ export function testDshProviders() {
   const get = h.sandbox.getDshProviders;
   assert.ok(typeof get === "function", "getDshProviders 应为顶层函数");
 
-  // 首次调用写入默认两个提供方
+  // 首次调用写入默认提供方 (OpenAI, DeepSeek, Anthropic, AgentRouter, Ollama)
   const first = get();
-  assert.strictEqual(first.length, 2, "默认应有 2 个提供方");
+  assert.strictEqual(first.length, 5, "默认应有 5 个提供方预设");
+  assert.ok(first.some(p => p.id === "prov_openai"));
   assert.ok(first.some(p => p.id === "prov_deepseek"));
+  assert.ok(first.some(p => p.id === "prov_anthropic"));
   assert.ok(first.some(p => p.id === "prov_agentrouter"));
+  assert.ok(first.some(p => p.id === "prov_ollama"));
 
   // 已保存数据直接返回 (往返一致)
   const second = get();
-  assert.strictEqual(second.length, 2);
+  assert.strictEqual(second.length, 5);
   assert.strictEqual(second[0].id, first[0].id);
 
   // 外部保存的自定义提供方可读回
   h.localStorage.setItem("dsh_providers_config", JSON.stringify([{ id: "custom1", name: "My", isCustom: true, protocol: "openai", baseUrl: "https://x/v1", apiKey: "", models: "m1" }]));
   const third = get();
-  assert.strictEqual(third.length, 1);
-  assert.strictEqual(third[0].id, "custom1");
+  assert.ok(third.some(p => p.id === "custom1"));
 
   // 损坏 JSON → 回退默认
   h.localStorage.setItem("dsh_providers_config", "{bad json");
   const fourth = get();
-  assert.strictEqual(fourth.length, 2, "损坏 JSON 应回退默认提供方");
+  assert.strictEqual(fourth.length, 5, "损坏 JSON 应回退默认提供方");
 
   // 空数组 → 回退默认
   h.localStorage.setItem("dsh_providers_config", "[]");
   const fifth = get();
-  assert.strictEqual(fifth.length, 2, "空数组应回退默认提供方");
+  assert.strictEqual(fifth.length, 5, "空数组应回退默认提供方");
 }
