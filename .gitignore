@@ -31,3 +31,6 @@ _*.js
 Thumbs.db
 .idea/
 .vscode/
+
+# Agent Harness Traces
+.agent/

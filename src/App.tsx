@@ -31,6 +31,7 @@ export const App: React.FC = () => {
     createNewSession,
     deleteSession,
     addMessageToCurrentSession,
+    updateLastMessageInCurrentSession,
     clearCurrentSessionMessages,
     exportCurrentSessionAsMarkdown,
   } = useSessions();
@@ -161,6 +162,8 @@ export const App: React.FC = () => {
     };
     addMessageToCurrentSession(userMsg);
 
+    let unsubscribeStream: (() => void) | null = null;
+
     try {
       // 查找当前所选模型归属的提供方及模型专属配置
       const matchedModel = allModels.find(m => m.value.toLowerCase() === selectedModel.toLowerCase());
@@ -192,6 +195,32 @@ export const App: React.FC = () => {
       contextMessages.push({ role: 'user', content: actualUserPrompt });
 
       let response: { content?: string; thinking?: string; toolCall?: any } | null = null;
+      const streamId = 'stream_' + Date.now();
+
+      // 先在会话中追加占位的 Assistant 消息，随着流式接收实时增量填充
+      const initialThinking = activeSkill ? `🧠 技能【${activeSkill.name}】已激活，正在思考...` : '正在思考与组织回复...';
+      const placeholderAssistant: ChatMessage = {
+        role: 'assistant',
+        model: selectedModel,
+        thinking: initialThinking,
+        content: '',
+        timestamp: Date.now()
+      };
+      addMessageToCurrentSession(placeholderAssistant);
+
+      if (window.codexDesktop?.onLlmStreamChunk) {
+        unsubscribeStream = window.codexDesktop.onLlmStreamChunk((data) => {
+          if (data.streamId === streamId) {
+            if (data.contentDelta || data.thinkingDelta) {
+              updateLastMessageInCurrentSession(prev => ({
+                ...prev,
+                content: (prev.content || '') + (data.contentDelta || ''),
+                thinking: data.thinkingDelta ? (prev.thinking || '') + data.thinkingDelta : prev.thinking
+              }));
+            }
+          }
+        });
+      }
 
       if (window.codexDesktop && window.codexDesktop.callLlmApi) {
         let endpoint = effectiveBaseUrl;
@@ -202,6 +231,7 @@ export const App: React.FC = () => {
           body = {
             model: selectedModel,
             max_tokens: 4096,
+            stream: true,
             messages: contextMessages.filter(m => m.role !== 'system'),
             system: contextMessages.find(m => m.role === 'system')?.content
           };
@@ -211,6 +241,7 @@ export const App: React.FC = () => {
           }
           body = {
             model: selectedModel,
+            stream: true,
             messages: contextMessages
           };
         } else {
@@ -220,6 +251,7 @@ export const App: React.FC = () => {
           }
           body = {
             model: selectedModel,
+            stream: true,
             messages: contextMessages
           };
         }
@@ -227,7 +259,10 @@ export const App: React.FC = () => {
         const rawRes: any = await window.codexDesktop.callLlmApi({
           endpoint,
           apiKey: effectiveApiKey,
-          body
+          body,
+          stream: true,
+          streamId,
+          timeout: matchedModel?.timeoutSeconds
         });
 
         if (rawRes && rawRes.ok) {
@@ -242,32 +277,31 @@ export const App: React.FC = () => {
             const thinking = choice?.message?.reasoning_content || choice?.message?.reasoning || '';
             response = { content: text, thinking };
           }
+
+          // 若流式已输出，保持已有内容；若未收到流式内容，做兜底覆盖
+          updateLastMessageInCurrentSession(prev => ({
+            ...prev,
+            content: prev.content || response?.content || '⚠️ 未收到有效模型回复，请检查 Base URL 与 API Key 是否正确。',
+            thinking: response?.thinking || prev.thinking || '任务思考已完成。'
+          }));
         } else {
           let errText = rawRes?.body;
           if (typeof errText === 'object') errText = JSON.stringify(errText);
           throw new Error(errText || rawRes?.statusText || `HTTP ${rawRes?.status || 500}`);
         }
       }
-
-      const assistantMsg: ChatMessage = {
-        role: 'assistant',
-        model: selectedModel,
-        thinking: response?.thinking || (activeSkill ? `🧠 技能【${activeSkill.name}】已激活并执行。` : '任务思考已完成。'),
-        content: response?.content || '⚠️ 未收到有效模型回复，请检查 Base URL 与 API Key 是否正确。',
-        toolCall: response?.toolCall,
-        timestamp: Date.now()
-      };
-      addMessageToCurrentSession(assistantMsg);
     } catch (err: any) {
-      const errorMsg: ChatMessage = {
-        role: 'assistant',
-        model: selectedModel,
-        thinking: '执行异常',
-        content: `❌ 请求失败: ${err.message || '网络连接超时或提供方异常'}`,
-        timestamp: Date.now()
-      };
-      addMessageToCurrentSession(errorMsg);
+      updateLastMessageInCurrentSession(prev => ({
+        ...prev,
+        content: prev.content
+          ? `${prev.content}\n\n❌ [传输中断]: ${err.message}`
+          : `❌ 请求失败: ${err.message || '网络连接超时或提供方异常'}`,
+        thinking: '执行异常'
+      }));
     } finally {
+      if (unsubscribeStream) {
+        unsubscribeStream();
+      }
       setIsGenerating(false);
     }
   };

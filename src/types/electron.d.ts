@@ -65,7 +65,8 @@ export interface CodexDesktopAPI {
   getAppInfo: () => Promise<AppInfo>;
   getSkills: () => Promise<SkillItem[]>;
   requestLLM: (payload: LLMRequestPayload) => Promise<LLMResponsePayload>;
-  callLlmApi?: (payload: { endpoint: string; apiKey?: string; body: any; customHeaders?: Record<string, string> }) => Promise<{ ok: boolean; status: number; statusText: string; body: string }>;
+  callLlmApi?: (payload: { endpoint: string; apiKey?: string; body: any; customHeaders?: Record<string, string>; timeout?: number; stream?: boolean; streamId?: string }) => Promise<{ ok: boolean; status: number; statusText: string; body: string }>;
+  onLlmStreamChunk?: (callback: (data: { streamId?: string; contentDelta?: string; thinkingDelta?: string; isDone?: boolean }) => void) => () => void;
   setTheme?: (theme: string) => void;
   getThemes?: () => any;
   getCurrentTheme?: () => string;

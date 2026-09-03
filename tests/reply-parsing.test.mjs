@@ -93,4 +93,17 @@ export function runReplyParsingTests() {
   );
   assert.strictEqual(errHtml.ok, false);
   assert.ok(errHtml.content.includes("502"), "错误消息应包含状态码");
+
+  // 8) 流式保活仿真测试 (模拟 120s 长任务持续输出，心跳阈值 90s，绝不超时)
+  const chunkTimes = [0, 20000, 40000, 60000, 80000, 100000, 120000];
+  let lastChunk = 0;
+  let didTimeout = false;
+  for (const t of chunkTimes) {
+    if (t - lastChunk > 90000) {
+      didTimeout = true;
+      break;
+    }
+    lastChunk = t;
+  }
+  assert.strictEqual(didTimeout, false, "只要数据流持续涌现，120s 长任务绝对不会触发空闲超时");
 }

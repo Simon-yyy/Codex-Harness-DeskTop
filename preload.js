@@ -177,6 +177,11 @@ contextBridge.exposeInMainWorld("codexDesktop", {
     }
   },
   callLlmApi: (payload) => ipcRenderer.invoke('call-llm-api', payload),
+  onLlmStreamChunk: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on("llm-stream-chunk", handler);
+    return () => ipcRenderer.removeListener("llm-stream-chunk", handler);
+  },
   onThemeChange: (callback) => {
     ipcRenderer.on("theme-change", (_event, theme) => callback(theme));
   },

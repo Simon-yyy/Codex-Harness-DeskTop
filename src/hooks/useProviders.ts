@@ -54,13 +54,13 @@ export const DEFAULT_PROVIDER_PRESETS: ProviderPreset[] = [
     type: 'custom',
     baseUrl: 'https://api.openai.com/v1',
     apiKey: '',
-    models: 'gpt-5.6-sol, gpt-5.4-mini, custom-model',
+    models: '',
     isCustom: true
   }
 ];
 
 export function parseModelList(rawModels: string): string[] {
-  if (!rawModels || typeof rawModels !== 'string') return ['gpt-5.6-sol'];
+  if (!rawModels || typeof rawModels !== 'string') return [];
   return rawModels
     .split(/[\n,，]+/)
     .map(m => m.trim())
@@ -84,7 +84,7 @@ export function normalizeAndDeduplicateProviders(rawList: any[]): ProviderPreset
     const name = String(item.name || '未命名服务商');
     const baseUrl = String(item.baseUrl || 'https://api.openai.com/v1');
     const apiKey = String(item.apiKey || '');
-    const models = String(item.models || 'gpt-5.6-sol');
+    const models = typeof item.models === 'string' ? item.models : '';
 
     let protocol = item.protocol;
     if (!protocol) {
@@ -116,6 +116,7 @@ export function normalizeAndDeduplicateProviders(rawList: any[]): ProviderPreset
         protocol: exist?.protocol,
         baseUrl: exist?.baseUrl,
         apiKey: exist?.apiKey,
+        timeoutSeconds: exist?.timeoutSeconds,
         temperature: exist?.temperature,
         maxTokens: exist?.maxTokens
       };
@@ -185,7 +186,8 @@ export function useProviders() {
           providerName: p.name,
           protocol: modelCfg?.protocol || p.protocol || 'openai',
           baseUrl: modelCfg?.baseUrl || p.baseUrl,
-          apiKey: modelCfg?.apiKey || p.apiKey
+          apiKey: modelCfg?.apiKey || p.apiKey,
+          timeoutSeconds: modelCfg?.timeoutSeconds
         });
       }
     });

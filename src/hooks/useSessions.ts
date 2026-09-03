@@ -133,6 +133,22 @@ export function useSessions() {
     URL.revokeObjectURL(url);
   };
 
+  const updateLastMessageInCurrentSession = (updater: (lastMsg: ChatMessage) => ChatMessage) => {
+    setSessions(prev => prev.map(s => {
+      if (s.id === currentSessionId && s.messages.length > 0) {
+        const lastIdx = s.messages.length - 1;
+        const updated = [...s.messages];
+        updated[lastIdx] = updater(updated[lastIdx]);
+        return {
+          ...s,
+          updatedAt: Date.now(),
+          messages: updated
+        };
+      }
+      return s;
+    }));
+  };
+
   return {
     sessions,
     currentSessionId,
@@ -141,6 +157,7 @@ export function useSessions() {
     createNewSession,
     deleteSession,
     addMessageToCurrentSession,
+    updateLastMessageInCurrentSession,
     clearCurrentSessionMessages,
     exportCurrentSessionAsMarkdown
   };

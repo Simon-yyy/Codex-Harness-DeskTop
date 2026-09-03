@@ -7,6 +7,7 @@ export interface ModelDetailConfig {
   protocol?: ProviderProtocol; // 该模型专属协议 (若不指定则继承服务商)
   baseUrl?: string; // 该模型专属 Base URL (若不指定则继承服务商)
   apiKey?: string; // 该模型专属 API Key (若不指定则继承服务商)
+  timeoutSeconds?: number; // 该模型专属超时时间限制 (秒，默认自适应)
   temperature?: number;
   maxTokens?: number;
 }
@@ -31,4 +32,5 @@ export interface ModelOption {
   protocol?: ProviderProtocol;
   baseUrl?: string;
   apiKey?: string;
+  timeoutSeconds?: number;
 }

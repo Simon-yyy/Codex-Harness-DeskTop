@@ -17,7 +17,8 @@ import {
   AlertCircle,
   Loader2,
   Sliders,
-  ChevronRight
+  ChevronRight,
+  Clock
 } from 'lucide-react';
 import { ProviderPreset, ProviderProtocol, ModelDetailConfig } from '@/types/provider';
 import { DEFAULT_PROVIDER_PRESETS, parseModelList } from '@/hooks/useProviders';
@@ -119,13 +120,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       type: 'custom',
       baseUrl: 'https://api.openai.com/v1',
       apiKey: '',
-      models: 'gpt-5.6-sol',
-      modelConfigs: [{ id: 'gpt-5.6-sol', name: 'gpt-5.6-sol' }],
+      models: '',
+      modelConfigs: [],
       isCustom: true
     };
     setLocalProviders(prev => [...prev, newProv]);
     setActiveProviderId(newId);
-    setSelectedModelName('gpt-5.6-sol');
+    setSelectedModelName('');
     setTestResult(null);
   };
 
@@ -211,7 +212,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setTestResult(null);
     const startTime = Date.now();
 
-    const modelToTest = targetModelName || activeModelName || currentModelList[0] || 'gpt-5.6-sol';
+    const modelToTest = targetModelName || activeModelName || currentModelList[0] || '';
+    if (!modelToTest) {
+      setIsTesting(false);
+      setTestResult({
+        success: false,
+        message: '请先在上方输入模型名称并点击【添加胶囊】后再测试连通性。'
+      });
+      return;
+    }
+
     const modelCfg = (currentProvider.modelConfigs || []).find(
       c => c.name.toLowerCase() === modelToTest.toLowerCase()
     );
@@ -618,6 +628,31 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           className="w-full px-3 py-1.5 bg-bg-base border border-border rounded-lg text-xs font-mono text-text-primary focus:outline-none focus:border-accent"
                         />
                       </div>
+
+                      {/* 3. 请求超时控制 (秒) */}
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-semibold text-text-primary flex items-center gap-1.5">
+                            <Clock size={12} className="text-accent" />
+                            请求超时控制 (秒)
+                          </label>
+                          <span className="text-[10px] text-text-muted">
+                            {activeModelConfig.timeoutSeconds ? `自定义: ${activeModelConfig.timeoutSeconds}s` : '默认自适应保活'}
+                          </span>
+                        </div>
+                        <input
+                          type="number"
+                          min="10"
+                          max="600"
+                          value={activeModelConfig.timeoutSeconds || ''}
+                          onChange={(e) => {
+                            const val = e.target.value ? parseInt(e.target.value, 10) : undefined;
+                            updateActiveModelConfig('timeoutSeconds', val);
+                          }}
+                          placeholder="默认自适应滑动保活 (按输入长度 120s~300s 弹性伸缩，持续传输永不断开)"
+                          className="w-full px-3 py-1.5 bg-bg-base border border-border rounded-lg text-xs font-mono text-text-primary focus:outline-none focus:border-accent"
+                        />
+                      </div>
                     </div>
 
                     {/* 3. 在线连通性测试模块 */}
@@ -664,7 +699,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       </button>
                     </div>
                   </div>
-                ) : null}
+                ) : (
+                  <div className="p-8 bg-bg-card/40 rounded-xl border border-dashed border-border/80 text-center space-y-2">
+                    <div className="w-8 h-8 rounded-full bg-accent/10 text-accent flex items-center justify-center mx-auto text-sm">
+                      <Sparkles size={16} />
+                    </div>
+                    <p className="text-xs font-semibold text-text-primary">当前服务商尚未添加任何模型胶囊</p>
+                    <p className="text-[11px] text-text-muted max-w-md mx-auto leading-relaxed">
+                      请在上方输入框键入您想调用的模型标识（如 <span className="font-mono text-accent">deepseek-chat</span>、<span className="font-mono text-accent">qwen-max</span> 等）按 Enter 或点击【添加胶囊】，即可为该模型配置独立的 Base URL、API Key 与专属连通测试。
+                    </p>
+                  </div>
+                )}
               </>
             ) : (
               <div className="h-full flex items-center justify-center text-xs text-text-muted">

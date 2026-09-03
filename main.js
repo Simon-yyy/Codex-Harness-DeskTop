@@ -50,7 +50,7 @@ function initBuiltinSkills() {
           syncedCount++;
         }
       }
-      console.log(`[codex-desktop] ✓ 自动增量热同步 ${syncedCount} 个技能到: ${targetDir}`);
+      process.stdout.write(`[codex-desktop] ✓ 自动增量热同步 ${syncedCount} 个技能到: ${targetDir}\n`);
     }
   } catch (err) {
     console.error("[codex-desktop] 部署技能库异常:", err);
@@ -617,7 +617,7 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
   // 原生 Node.js 底层 HTTP 请求管道 (通用双协议自适应: OpenAI 兼容 & Anthropic 原生)
     // 原生 Node.js 底层 HTTP 请求管道 (精准协议隔离与官方客户端指纹模拟)
   ipcMain.handle("call-llm-api", async (event, payload) => {
-    const { endpoint, apiKey, body, customHeaders = {} } = payload;
+    const { endpoint, apiKey, body, customHeaders = {}, timeout: userTimeout, stream = false, streamId = '' } = payload;
     const https = require("https");
     const http = require("http");
     const url = require("url");
@@ -626,6 +626,11 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
       const parsedUrl = url.parse(endpoint);
       const isHttps = parsedUrl.protocol === "https:";
       const client = isHttps ? https : http;
+
+      // 如果启用了流式传输，确保 body.stream 为 true
+      if (stream && typeof body === 'object' && body !== null) {
+        body.stream = true;
+      }
 
       const postData = JSON.stringify(body);
       const cleanKey = (apiKey || "").trim();
@@ -642,7 +647,7 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
           "x-api-key": cleanKey,
           "anthropic-version": "2023-06-01",
           "User-Agent": "cline/3.0.0",
-          "Accept": "application/json",
+          "Accept": stream ? "text/event-stream, application/json" : "application/json",
           "Connection": "keep-alive",
           ...customHeaders
         };
@@ -653,36 +658,154 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
           "Content-Length": Buffer.byteLength(postData),
           "Authorization": cleanKey ? `Bearer ${cleanKey}` : "",
           "User-Agent": "cline/3.0.0",
-          "Accept": "application/json",
+          "Accept": stream ? "text/event-stream, application/json" : "application/json",
           "Connection": "keep-alive",
           ...customHeaders
         };
       }
+
+      // -----------------------------------------------------------------------
+      // 双层自适应超时控制系统:
+      // 1. 首包自适应: 根据发送 Prompt 字节大小动态调节首包等待 (默认 120s，长任务最高 300s)
+      // 2. 滑动窗口保活 (Rolling Inactivity Timeout): 数据流一旦开始吐字，只要在持续传输，连接永不中断
+      // -----------------------------------------------------------------------
+      const payloadBytes = Buffer.byteLength(postData);
+      const adaptiveInitialMs = userTimeout && userTimeout > 0
+        ? userTimeout * 1000
+        : Math.min(300000, 120000 + Math.floor(payloadBytes / 1000) * 15000);
+
+      const rollingInactivityMs = 90000; // 数据流入后的空闲静默容忍度 (90s)
+      let activeTimer = null;
+      let hasReceivedFirstByte = false;
+      let sseBuffer = "";
+      let accumulatedText = "";
+      let accumulatedThinking = "";
+
+      const clearActiveTimer = () => {
+        if (activeTimer) {
+          clearTimeout(activeTimer);
+          activeTimer = null;
+        }
+      };
+
+      const setTimer = (ms, reason) => {
+        clearActiveTimer();
+        activeTimer = setTimeout(() => {
+          req.destroy();
+          resolve({
+            ok: false,
+            status: 408,
+            statusText: "Request Timeout",
+            body: JSON.stringify({
+              error: {
+                message: reason
+              }
+            })
+          });
+        }, ms);
+      };
 
       const options = {
         hostname: parsedUrl.hostname,
         port: parsedUrl.port || (isHttps ? 443 : 80),
         path: parsedUrl.path,
         method: "POST",
-        headers: headers,
-        timeout: 60000
+        headers: headers
       };
 
       const req = client.request(options, (res) => {
         let responseBody = "";
         res.setEncoding("utf8");
-        res.on("data", (chunk) => { responseBody += chunk; });
+
+        res.on("data", (chunk) => {
+          if (!hasReceivedFirstByte) {
+            hasReceivedFirstByte = true;
+          }
+          // 只要数据流在持续流动，每次接收到数据块均自动刷新心跳计时器
+          setTimer(rollingInactivityMs, "数据流传输静默超时 (90s)，服务端可能已意外断开");
+          responseBody += chunk;
+
+          // 若开启了流式模式且响应正常，进行实时 SSE 事件流解析
+          if (stream && res.statusCode >= 200 && res.statusCode < 300) {
+            sseBuffer += chunk;
+            const lines = sseBuffer.split(/\r?\n/);
+            sseBuffer = lines.pop() || "";
+
+            for (const line of lines) {
+              const trimmedLine = line.trim();
+              if (!trimmedLine || !trimmedLine.startsWith("data:")) continue;
+              const dataStr = trimmedLine.replace(/^data:\s*/, "");
+              if (dataStr === "[DONE]") continue;
+
+              try {
+                const parsed = JSON.parse(dataStr);
+                // 1. OpenAI 兼容流式 Delta
+                const choice = parsed.choices?.[0];
+                const deltaText = choice?.delta?.content || "";
+                const deltaThinking = choice?.delta?.reasoning_content || choice?.delta?.reasoning || "";
+
+                // 2. Anthropic 原生流式 Delta
+                let anthropicText = "";
+                let anthropicThinking = "";
+                if (parsed.type === "content_block_delta") {
+                  if (parsed.delta?.type === "text_delta") anthropicText = parsed.delta.text || "";
+                  if (parsed.delta?.type === "thinking_delta") anthropicThinking = parsed.delta.thinking || "";
+                }
+
+                const contentDelta = deltaText || anthropicText;
+                const thinkingDelta = deltaThinking || anthropicThinking;
+
+                if (contentDelta) accumulatedText += contentDelta;
+                if (thinkingDelta) accumulatedThinking += thinkingDelta;
+
+                if ((contentDelta || thinkingDelta) && !event.sender.isDestroyed()) {
+                  event.sender.send("llm-stream-chunk", {
+                    streamId,
+                    contentDelta,
+                    thinkingDelta,
+                    isDone: false
+                  });
+                }
+              } catch (e) {
+                // 部分未完整的 JSON 片段忽略，等待下个 chunk 拼接
+              }
+            }
+          }
+        });
+
         res.on("end", () => {
+          clearActiveTimer();
+          if (stream && !event.sender.isDestroyed()) {
+            event.sender.send("llm-stream-chunk", {
+              streamId,
+              isDone: true
+            });
+          }
+
+          // 如果是流式模式，返回已组装好的统一格式，兼容后续兜底消费
+          let finalBody = responseBody;
+          if (stream && accumulatedText) {
+            finalBody = JSON.stringify({
+              choices: [{
+                message: {
+                  content: accumulatedText,
+                  reasoning_content: accumulatedThinking
+                }
+              }]
+            });
+          }
+
           resolve({
             ok: res.statusCode >= 200 && res.statusCode < 300,
             status: res.statusCode,
             statusText: res.statusMessage,
-            body: responseBody
+            body: finalBody
           });
         });
       });
 
       req.on("error", (e) => {
+        clearActiveTimer();
         resolve({
           ok: false,
           status: 0,
@@ -691,15 +814,11 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
         });
       });
 
-      req.on("timeout", () => {
-        req.destroy();
-        resolve({
-          ok: false,
-          status: 408,
-          statusText: "Request Timeout",
-          body: JSON.stringify({ error: { message: "请求超时 (60s)，请检查中转站响应速度" } })
-        });
-      });
+      // 初始化启动首包等待计时器
+      setTimer(
+        adaptiveInitialMs,
+        `首包响应等待超时 (${Math.round(adaptiveInitialMs / 1000)}s)，当前为长任务或中转站排队中，请检查中转站响应速度`
+      );
 
       req.write(postData);
       req.end();

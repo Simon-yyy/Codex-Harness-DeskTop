@@ -79,14 +79,15 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
           if (isUser) {
             return (
               <div key={idx} className="flex flex-col items-end space-y-1.5 animate-fadeIn">
-                <div className="flex items-center gap-1.5 text-xs text-text-muted font-medium">
+                <div className="flex items-center gap-1.5 text-xs text-text-muted font-medium pr-1">
                   <span>您</span>
-                  <div className="w-5 h-5 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center text-[10px]">
-                    <User size={12} />
+                  <div className="w-5 h-5 rounded-full bg-accent/15 text-accent flex items-center justify-center text-[10px] font-bold">
+                    <User size={11} />
                   </div>
                 </div>
 
-                <div className="max-w-[85%] bg-blue-600/10 dark:bg-blue-950/40 border border-blue-500/30 rounded-2xl rounded-tr-xs p-3.5 text-xs text-text-primary shadow-xs leading-relaxed break-words space-y-2">
+                {/* 用户气泡卡片：采用与主题完全同构的高级无边突兀微光质感 */}
+                <div className="max-w-[88%] sm:max-w-3xl bg-bg-card border border-border rounded-2xl rounded-tr-xs p-4 text-xs text-text-primary shadow-xs space-y-2.5 transition-all">
                   {msg.images && msg.images.length > 0 && (
                     <div className="flex flex-wrap gap-2 mb-2">
                       {msg.images.map((rawSrc, imgIdx) => {
@@ -100,66 +101,93 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                             onError={(e) => {
                               (e.target as HTMLElement).style.display = 'none';
                             }}
-                            className="max-h-[160px] max-w-[240px] object-cover rounded-lg border border-border cursor-zoom-in hover:brightness-105 transition-all"
+                            className="max-h-[160px] max-w-[240px] object-cover rounded-xl border border-border cursor-zoom-in hover:brightness-105 transition-all shadow-2xs"
                           />
                         );
                       })}
                     </div>
                   )}
-                  {msg.content && <div className="whitespace-pre-wrap">{msg.content}</div>}
+
+                  {/* 用户正文内容 */}
+                  {msg.content && (
+                    <div className="whitespace-pre-wrap leading-relaxed break-words text-text-primary font-normal select-text">
+                      {msg.content}
+                    </div>
+                  )}
+
+                  {/* 用户卡片底部操作栏 (时间戳 + 复制指令按钮) */}
+                  <div className="flex items-center justify-between pt-2 border-t border-border/60 text-[11px] text-text-muted">
+                    <span>{new Date(msg.timestamp).toLocaleTimeString()}</span>
+                    <button
+                      onClick={() => copyToClipboard(msg.content, idx)}
+                      className="flex items-center gap-1 px-2 py-0.5 rounded-md hover:bg-bg-hover text-text-secondary hover:text-text-primary transition-colors text-[11px] font-medium"
+                      title="复制我的指令"
+                    >
+                      {copiedIdx === idx ? <Check size={11} className="text-emerald-500" /> : <Copy size={11} />}
+                      <span className={copiedIdx === idx ? 'text-emerald-500 font-semibold' : ''}>
+                        {copiedIdx === idx ? '已复制' : '复制指令'}
+                      </span>
+                    </button>
+                  </div>
                 </div>
               </div>
             );
           }
 
+          // Assistant 响应卡片
           return (
-            <div key={idx} className="flex flex-col items-start space-y-2 animate-fadeIn w-full">
-              <div className="flex items-center gap-2 text-xs">
-                <div className="w-6 h-6 rounded-lg bg-orange-500/20 text-orange-500 flex items-center justify-center text-xs">
-                  <Bot size={14} />
+            <div key={idx} className="flex flex-col items-start space-y-1.5 animate-fadeIn w-full">
+              <div className="flex items-center gap-2 text-xs pl-1">
+                <div className="w-5 h-5 rounded-md bg-accent/20 text-accent flex items-center justify-center text-xs shadow-2xs">
+                  <Bot size={13} />
                 </div>
                 <span className="font-bold text-text-primary">Codex Agent</span>
                 {msg.model && (
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-bg-card border border-border text-text-muted">
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-bg-card border border-border/80 text-text-muted">
                     {msg.model}
                   </span>
                 )}
               </div>
 
-              <div className="w-full bg-bg-card border border-border rounded-xl p-4 shadow-sm space-y-3">
+              <div className="w-full bg-bg-card border border-border rounded-2xl p-4 shadow-xs space-y-3 transition-all">
+                {/* 思考过程 Accordion */}
                 {msg.thinking && (
-                  <div className="border border-border/80 rounded-lg overflow-hidden bg-bg-sidebar/50">
+                  <div className="border border-border/80 rounded-xl overflow-hidden bg-bg-sidebar/40">
                     <button
                       onClick={() => toggleThinking(idx)}
-                      className="w-full px-3 py-2 flex items-center justify-between text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+                      className="w-full px-3.5 py-2 flex items-center justify-between text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
                     >
                       <span className="flex items-center gap-1.5">
-                        <Sparkles size={13} className="text-amber-400" />
-                        思考过程分析
+                        <Sparkles size={13} className="text-accent" />
+                        <span>思考过程分析</span>
                       </span>
                       {expandedThinking[idx] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                     </button>
                     {expandedThinking[idx] && (
-                      <div className="px-3.5 py-2.5 text-xs text-text-muted border-t border-border bg-bg-base/40 whitespace-pre-wrap font-mono leading-relaxed max-h-60 overflow-y-auto">
+                      <div className="px-3.5 py-2.5 text-xs text-text-muted border-t border-border/60 bg-bg-base/40 whitespace-pre-wrap font-mono leading-relaxed max-h-64 overflow-y-auto select-text">
                         {msg.thinking}
                       </div>
                     )}
                   </div>
                 )}
 
-                <div className="text-xs text-text-primary leading-relaxed whitespace-pre-wrap break-words">
+                {/* 正文内容 */}
+                <div className="text-xs text-text-primary leading-relaxed whitespace-pre-wrap break-words select-text">
                   {msg.content}
                 </div>
 
-                <div className="flex items-center justify-between pt-2 border-t border-border-light text-[11px] text-text-muted">
+                {/* 卡片底部操作栏 */}
+                <div className="flex items-center justify-between pt-2 border-t border-border/60 text-[11px] text-text-muted">
                   <span>{new Date(msg.timestamp).toLocaleTimeString()}</span>
                   <button
                     onClick={() => copyToClipboard(msg.content, idx)}
-                    className="flex items-center gap-1 px-2 py-1 rounded hover:bg-bg-hover text-text-secondary hover:text-text-primary transition-colors"
+                    className="flex items-center gap-1 px-2 py-0.5 rounded-md hover:bg-bg-hover text-text-secondary hover:text-text-primary transition-colors text-[11px] font-medium"
                     title="复制回答"
                   >
-                    {copiedIdx === idx ? <Check size={12} className="text-green-500" /> : <Copy size={12} />}
-                    <span>{copiedIdx === idx ? '已复制' : '复制'}</span>
+                    {copiedIdx === idx ? <Check size={11} className="text-emerald-500" /> : <Copy size={11} />}
+                    <span className={copiedIdx === idx ? 'text-emerald-500 font-semibold' : ''}>
+                      {copiedIdx === idx ? '已复制' : '复制回答'}
+                    </span>
                   </button>
                 </div>
               </div>
