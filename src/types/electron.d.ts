@@ -14,6 +14,9 @@ export interface SkillItem {
   description: string;
   prompt: string;
   content?: string;
+  displayName?: string;
+  chineseSummary?: string;
+  category?: string;
 }
 
 export interface ProviderConfig {
@@ -61,12 +64,54 @@ export interface UpdateProgress {
   totalBytes: number;
 }
 
+export interface WorkspaceFileItem {
+  name: string;
+  path: string;
+  fullPath: string;
+  isDirectory: boolean;
+  children?: WorkspaceFileItem[];
+}
+
+export type PermissionMode = 'workspace-readonly' | 'full-access';
+
+export interface SecurityStatus {
+  activeWorkspaceDir: string | null;
+  permissionMode: PermissionMode;
+}
+
+export interface ReadWorkspaceFileResult {
+  ok: boolean;
+  code?: string;
+  reason?: string;
+  hint?: string;
+  relativePath?: string;
+  fullPath?: string;
+  content?: string;
+  isTruncated?: boolean;
+  totalBytes?: number;
+  permissionMode?: PermissionMode;
+}
+
+export interface WorkspaceTreeResult {
+  rootPath: string;
+  rootName: string;
+  tree: WorkspaceFileItem[];
+  totalCount?: number;
+  isTruncated?: boolean;
+  error?: string;
+}
+
 export interface CodexDesktopAPI {
   getAppInfo: () => Promise<AppInfo>;
   getSkills: () => Promise<SkillItem[]>;
   requestLLM: (payload: LLMRequestPayload) => Promise<LLMResponsePayload>;
   callLlmApi?: (payload: { endpoint: string; apiKey?: string; body: any; customHeaders?: Record<string, string>; timeout?: number; stream?: boolean; streamId?: string }) => Promise<{ ok: boolean; status: number; statusText: string; body: string }>;
   onLlmStreamChunk?: (callback: (data: { streamId?: string; contentDelta?: string; thinkingDelta?: string; isDone?: boolean }) => void) => () => void;
+  selectWorkspaceDir?: () => Promise<string | null>;
+  readWorkspaceTree?: (dirPath?: string) => Promise<WorkspaceTreeResult | null>;
+  getSecurityStatus?: () => Promise<SecurityStatus>;
+  setPermissionMode?: (mode: PermissionMode) => Promise<{ ok: boolean; canceled?: boolean; error?: string; permissionMode: PermissionMode }>;
+  readWorkspaceFile?: (relativePath: string) => Promise<ReadWorkspaceFileResult>;
   setTheme?: (theme: string) => void;
   getThemes?: () => any;
   getCurrentTheme?: () => string;

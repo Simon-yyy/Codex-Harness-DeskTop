@@ -13,26 +13,26 @@ const THEMES: { id: ThemeType; name: string; desc: string; previewClass: string 
   {
     id: 'dark',
     name: 'escook Dark (默认)',
-    desc: '经典极客深黑主题 · 高对比度清晰文本',
-    previewClass: 'bg-[#18181b] border-[#ea580c]',
+    desc: '经典暖调极客深灰 · 彬哥标志性暖阳橙',
+    previewClass: 'bg-[#252526] border-[#ef820c]',
   },
   {
     id: 'dark-soft',
-    name: 'Dark Soft',
-    desc: '柔和深灰蓝主题 · 舒适夜间护眼',
-    previewClass: 'bg-[#1f2430] border-[#f97316]',
+    name: 'escook Dark Soft',
+    desc: 'Ayu 经典深海蓝灰 · 温润柔光奶杏黄',
+    previewClass: 'bg-[#1f2430] border-[#ffcc66]',
   },
   {
     id: 'light',
-    name: 'Light',
-    desc: '高明度极简浅色 · 清爽工业风',
-    previewClass: 'bg-[#ffffff] border-[#ea580c]',
+    name: 'escook Light',
+    desc: 'Solarized 护眼暖米白 · 典雅紫罗兰',
+    previewClass: 'bg-[#fdf6e3] border-[#705697]',
   },
   {
     id: 'light-soft',
-    name: 'Light Soft',
-    desc: '柔和米白浅色 · 护眼低眩光',
-    previewClass: 'bg-[#f4f4f5] border-[#f97316]',
+    name: 'escook Light Soft',
+    desc: '现代极简清透浅灰 · 柔和活力橙',
+    previewClass: 'bg-[#fafafa] border-[#ff9940]',
   },
 ];
 

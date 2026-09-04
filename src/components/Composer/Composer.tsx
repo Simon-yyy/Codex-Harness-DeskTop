@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Paperclip, ArrowUp, Sparkles, ChevronUp, X, Clock, Terminal, Zap, Shield, HelpCircle, Layers, Wrench } from 'lucide-react';
+import { Paperclip, ArrowUp, Sparkles, ChevronUp, X, Clock, Terminal, Zap, Shield, HelpCircle, Layers, Wrench, Globe } from 'lucide-react';
 import { AttachedImage, QueuedInstruction } from '@/types/session';
 import { ModelOption } from '@/types/provider';
-import { SkillItem } from '@/types/electron';
+import { SkillItem, PermissionMode } from '@/types/electron';
+import { getSkillDisplayInfo, SKILLS_DICTIONARY } from '@/data/skillsDictionary';
 
 interface ComposerProps {
   onSend: (text: string, images: AttachedImage[]) => void;
@@ -15,6 +16,8 @@ interface ComposerProps {
   inputPrompt: string;
   setInputPrompt: (text: string) => void;
   skills: SkillItem[];
+  permissionMode: PermissionMode;
+  onSelectPermissionMode: (mode: PermissionMode) => void;
 }
 
 const SLASH_COMMANDS = [
@@ -36,13 +39,17 @@ export const Composer: React.FC<ComposerProps> = ({
   inputPrompt,
   setInputPrompt,
   skills,
+  permissionMode,
+  onSelectPermissionMode,
 }) => {
   const [images, setImages] = useState<AttachedImage[]>([]);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [showModelPicker, setShowModelPicker] = useState(false);
+  const [showPermissionPicker, setShowPermissionPicker] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const modelPickerRef = useRef<HTMLDivElement>(null);
+  const permissionPickerRef = useRef<HTMLDivElement>(null);
   const slashMenuRef = useRef<HTMLDivElement>(null);
 
   // 全局点击空白区域与按 ESC 键自动收起模型选择和快捷指令卡片
@@ -50,6 +57,9 @@ export const Composer: React.FC<ComposerProps> = ({
     const handleClickOutside = (e: MouseEvent) => {
       if (modelPickerRef.current && !modelPickerRef.current.contains(e.target as Node)) {
         setShowModelPicker(false);
+      }
+      if (permissionPickerRef.current && !permissionPickerRef.current.contains(e.target as Node)) {
+        setShowPermissionPicker(false);
       }
       if (slashMenuRef.current && !slashMenuRef.current.contains(e.target as Node) && textareaRef.current && !textareaRef.current.contains(e.target as Node)) {
         setShowSlashMenu(false);
@@ -59,6 +69,7 @@ export const Composer: React.FC<ComposerProps> = ({
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setShowModelPicker(false);
+        setShowPermissionPicker(false);
         setShowSlashMenu(false);
       }
     };
@@ -163,9 +174,20 @@ export const Composer: React.FC<ComposerProps> = ({
     !query || c.cmd.slice(1).includes(query) || c.desc.toLowerCase().includes(query)
   );
 
-  const matchedSkills = (skills || []).filter(s =>
-    !query || s.id.toLowerCase().includes(query) || s.name.toLowerCase().includes(query) || s.description.toLowerCase().includes(query)
-  );
+  const matchedSkills = (skills || []).filter(s => {
+    if (!query) return true;
+    const info = getSkillDisplayInfo(s.id, s.name, s.description);
+    const dict = SKILLS_DICTIONARY[s.id] || SKILLS_DICTIONARY[s.name];
+    const matchKeywords = dict?.keywords?.some(k => k.toLowerCase().includes(query)) || false;
+    return (
+      s.id.toLowerCase().includes(query) ||
+      s.name.toLowerCase().includes(query) ||
+      s.description.toLowerCase().includes(query) ||
+      info.displayName.toLowerCase().includes(query) ||
+      info.chineseSummary.toLowerCase().includes(query) ||
+      matchKeywords
+    );
+  });
 
   return (
     <footer className="w-full max-w-5xl 2xl:max-w-6xl mx-auto px-2 sm:px-4 md:px-6 pb-4 select-none relative">
@@ -264,24 +286,27 @@ export const Composer: React.FC<ComposerProps> = ({
                   <span className="text-accent-warm font-normal">点击即刻装载指令</span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                  {matchedSkills.map(sk => (
-                    <div
-                      key={sk.id}
-                      onClick={() => handleSelectSlash(`/${sk.id}`)}
-                      className="p-2 rounded-lg bg-bg-sidebar/50 hover:bg-bg-hover border border-border/80 hover:border-accent/40 cursor-pointer transition-all space-y-0.5"
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-text-primary flex items-center gap-1.5 truncate">
-                          <Wrench size={12} className="text-accent" />
-                          <span className="truncate">{sk.name}</span>
-                        </span>
-                        <span className="text-[10px] font-mono text-accent-warm px-1 py-0.2 rounded bg-accent/10">
-                          /{sk.id}
-                        </span>
+                  {matchedSkills.map(sk => {
+                    const info = getSkillDisplayInfo(sk.id, sk.name, sk.description);
+                    return (
+                      <div
+                        key={sk.id}
+                        onClick={() => handleSelectSlash(`/${sk.id}`)}
+                        className="p-2.5 rounded-lg bg-bg-sidebar/50 hover:bg-bg-hover border border-border/80 hover:border-accent/40 cursor-pointer transition-all space-y-1"
+                      >
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="text-xs font-bold text-text-primary flex items-center gap-1.5 truncate">
+                            <Wrench size={12} className="text-accent shrink-0" />
+                            <span className="truncate" title={info.displayName}>{info.displayName}</span>
+                          </span>
+                          <span className="text-[10px] font-mono text-accent-warm px-1.5 py-0.2 rounded bg-accent/10 shrink-0">
+                            /{sk.id}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-text-muted line-clamp-1 leading-normal">{info.chineseSummary}</p>
                       </div>
-                      <p className="text-[11px] text-text-muted line-clamp-1">{sk.description}</p>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -333,8 +358,86 @@ export const Composer: React.FC<ComposerProps> = ({
 
         {/* 底部功能条与发送按钮 */}
         <div className="flex items-center justify-between px-3 pb-2 pt-1 border-t border-border-light text-[11px] text-text-muted">
-          <div className="flex items-center gap-2">
-            <span>Enter 发送 · Shift+Enter 换行</span>
+          <div className="flex items-center gap-2.5">
+            {/* 安全权限模式胶囊 */}
+            <div ref={permissionPickerRef} className="relative">
+              <button
+                type="button"
+                onClick={() => setShowPermissionPicker(!showPermissionPicker)}
+                className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium border transition-colors cursor-pointer shadow-xs ${
+                  permissionMode === 'full-access'
+                    ? 'bg-amber-500/10 text-amber-400 border-amber-500/30 hover:bg-amber-500/20'
+                    : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
+                }`}
+                title="点击切换 Agent 运行权限沙箱"
+              >
+                {permissionMode === 'full-access' ? (
+                  <>
+                    <Globe size={11} className="shrink-0 text-amber-400" />
+                    <span>全局受信任</span>
+                  </>
+                ) : (
+                  <>
+                    <Shield size={11} className="shrink-0 text-emerald-400" />
+                    <span>工作区只读</span>
+                  </>
+                )}
+                <ChevronUp size={10} className={`transition-transform duration-200 ${showPermissionPicker ? 'rotate-180' : ''}`} />
+              </button>
+
+              {/* 权限选择浮层 */}
+              {showPermissionPicker && (
+                <div className="absolute bottom-full left-0 mb-2 w-72 bg-bg-card border border-border rounded-xl shadow-2xl overflow-hidden z-50 animate-fadeIn select-none">
+                  <div className="p-2.5 bg-bg-sidebar border-b border-border flex items-center justify-between text-xs font-semibold text-text-primary">
+                    <span>安全沙箱权限等级</span>
+                    <span className="text-[10px] text-accent font-mono">主进程绝对权威</span>
+                  </div>
+                  <div className="p-1.5 space-y-1">
+                    <div
+                      onClick={() => {
+                        onSelectPermissionMode('workspace-readonly');
+                        setShowPermissionPicker(false);
+                      }}
+                      className={`p-2 rounded-lg cursor-pointer text-xs transition-colors space-y-0.5 ${
+                        permissionMode === 'workspace-readonly'
+                          ? 'bg-emerald-500/15 border border-emerald-500/40 text-emerald-300'
+                          : 'hover:bg-bg-hover text-text-secondary'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 font-semibold text-text-primary">
+                        <Shield size={13} className="text-emerald-400 shrink-0" />
+                        <span>工作区只读 (默认推荐)</span>
+                      </div>
+                      <p className="text-[11px] text-text-muted leading-tight">
+                        仅允许读取当前已选工作区代码与文件树，严禁访问工作区外部物理路径。
+                      </p>
+                    </div>
+
+                    <div
+                      onClick={() => {
+                        onSelectPermissionMode('full-access');
+                        setShowPermissionPicker(false);
+                      }}
+                      className={`p-2 rounded-lg cursor-pointer text-xs transition-colors space-y-0.5 ${
+                        permissionMode === 'full-access'
+                          ? 'bg-amber-500/15 border border-amber-500/40 text-amber-300'
+                          : 'hover:bg-bg-hover text-text-secondary'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 font-semibold text-text-primary">
+                        <Globe size={13} className="text-amber-400 shrink-0" />
+                        <span>全局受信任 (完全控制)</span>
+                      </div>
+                      <p className="text-[11px] text-text-muted leading-tight">
+                        允许跨工程读取本机任意系统文件，切换时触发主进程系统级确认弹窗。
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <span className="hidden sm:inline text-text-muted">Enter 发送 · Shift+Enter 换行</span>
           </div>
 
           <div className="flex items-center gap-2">

@@ -615,214 +615,620 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
   // 6. 底层原生大模型 API 请求管道 (Node.js 原生请求，模拟标准客户端防拦截)
   // -------------------------------------------------------------------------
   // 原生 Node.js 底层 HTTP 请求管道 (通用双协议自适应: OpenAI 兼容 & Anthropic 原生)
-    // 原生 Node.js 底层 HTTP 请求管道 (精准协议隔离与官方客户端指纹模拟)
+  // 原生 Node.js 底层 HTTP 请求管道 (通用双协议自适应 + 智能故障自愈重试)
   ipcMain.handle("call-llm-api", async (event, payload) => {
     const { endpoint, apiKey, body, customHeaders = {}, timeout: userTimeout, stream = false, streamId = '' } = payload;
     const https = require("https");
     const http = require("http");
     const url = require("url");
 
-    return new Promise((resolve) => {
-      const parsedUrl = url.parse(endpoint);
-      const isHttps = parsedUrl.protocol === "https:";
-      const client = isHttps ? https : http;
+    // 如果启用了流式传输，确保 body.stream 为 true
+    if (stream && typeof body === 'object' && body !== null) {
+      body.stream = true;
+    }
 
-      // 如果启用了流式传输，确保 body.stream 为 true
-      if (stream && typeof body === 'object' && body !== null) {
-        body.stream = true;
-      }
+    const postData = JSON.stringify(body);
+    const cleanKey = (apiKey || "").trim();
+    const parsedUrl = url.parse(endpoint);
+    const isHttps = parsedUrl.protocol === "https:";
+    const client = isHttps ? https : http;
 
-      const postData = JSON.stringify(body);
-      const cleanKey = (apiKey || "").trim();
+    // 判断是 Anthropic 原生端点还是 OpenAI 兼容端点
+    const isAnthropicEndpoint = endpoint.includes("/messages");
 
-      // 判断是 Anthropic 原生端点还是 OpenAI 兼容端点
-      const isAnthropicEndpoint = endpoint.includes("/messages");
-
-      let headers = {};
-      if (isAnthropicEndpoint) {
-        // 纯净 Anthropic 官方客户端请求头 (模拟 Claude Code)
-        headers = {
-          "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(postData),
-          "x-api-key": cleanKey,
-          "anthropic-version": "2023-06-01",
-          "User-Agent": "cline/3.0.0",
-          "Accept": stream ? "text/event-stream, application/json" : "application/json",
-          "Connection": "keep-alive",
-          ...customHeaders
-        };
-      } else {
-        // 纯净 OpenAI / Codex 官方 CLI 请求头 (严禁携带 Anthropic 混杂头，防 WAF 拦截)
-        headers = {
-          "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(postData),
-          "Authorization": cleanKey ? `Bearer ${cleanKey}` : "",
-          "User-Agent": "cline/3.0.0",
-          "Accept": stream ? "text/event-stream, application/json" : "application/json",
-          "Connection": "keep-alive",
-          ...customHeaders
-        };
-      }
-
-      // -----------------------------------------------------------------------
-      // 双层自适应超时控制系统:
-      // 1. 首包自适应: 根据发送 Prompt 字节大小动态调节首包等待 (默认 120s，长任务最高 300s)
-      // 2. 滑动窗口保活 (Rolling Inactivity Timeout): 数据流一旦开始吐字，只要在持续传输，连接永不中断
-      // -----------------------------------------------------------------------
-      const payloadBytes = Buffer.byteLength(postData);
-      const adaptiveInitialMs = userTimeout && userTimeout > 0
-        ? userTimeout * 1000
-        : Math.min(300000, 120000 + Math.floor(payloadBytes / 1000) * 15000);
-
-      const rollingInactivityMs = 90000; // 数据流入后的空闲静默容忍度 (90s)
-      let activeTimer = null;
-      let hasReceivedFirstByte = false;
-      let sseBuffer = "";
-      let accumulatedText = "";
-      let accumulatedThinking = "";
-
-      const clearActiveTimer = () => {
-        if (activeTimer) {
-          clearTimeout(activeTimer);
-          activeTimer = null;
-        }
+    let baseHeaders = {};
+    if (isAnthropicEndpoint) {
+      // 纯净 Anthropic 官方客户端请求头 (模拟 Claude Code)
+      baseHeaders = {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(postData),
+        "x-api-key": cleanKey,
+        "anthropic-version": "2023-06-01",
+        "User-Agent": "cline/3.0.0",
+        "Accept": stream ? "text/event-stream, application/json" : "application/json",
+        "Connection": "keep-alive",
+        ...customHeaders
       };
-
-      const setTimer = (ms, reason) => {
-        clearActiveTimer();
-        activeTimer = setTimeout(() => {
-          req.destroy();
-          resolve({
-            ok: false,
-            status: 408,
-            statusText: "Request Timeout",
-            body: JSON.stringify({
-              error: {
-                message: reason
-              }
-            })
-          });
-        }, ms);
+    } else {
+      // 纯净 OpenAI / Codex 官方 CLI 请求头 (严禁携带 Anthropic 混杂头，防 WAF 拦截)
+      baseHeaders = {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(postData),
+        "Authorization": cleanKey ? `Bearer ${cleanKey}` : "",
+        "User-Agent": "cline/3.0.0",
+        "Accept": stream ? "text/event-stream, application/json" : "application/json",
+        "Connection": "keep-alive",
+        ...customHeaders
       };
+    }
 
-      const options = {
-        hostname: parsedUrl.hostname,
-        port: parsedUrl.port || (isHttps ? 443 : 80),
-        path: parsedUrl.path,
-        method: "POST",
-        headers: headers
-      };
+    // -----------------------------------------------------------------------
+    // 双层自适应超时控制系统:
+    // 1. 首包自适应: 根据发送 Prompt 字节大小动态调节首包等待 (默认 120s，长任务最高 300s)
+    // 2. 滑动窗口保活 (Rolling Inactivity Timeout): 数据流一旦开始吐字，只要在持续传输，连接永不中断
+    // -----------------------------------------------------------------------
+    const payloadBytes = Buffer.byteLength(postData);
+    const adaptiveInitialMs = userTimeout && userTimeout > 0
+      ? userTimeout * 1000
+      : Math.min(300000, 120000 + Math.floor(payloadBytes / 1000) * 15000);
 
-      const req = client.request(options, (res) => {
-        let responseBody = "";
-        res.setEncoding("utf8");
+    const rollingInactivityMs = 90000; // 数据流入后的空闲静默容忍度 (90s)
 
-        res.on("data", (chunk) => {
-          if (!hasReceivedFirstByte) {
-            hasReceivedFirstByte = true;
+    // 单次底层网络请求执行体
+    const runAttempt = (attemptIndex, forceNewConnection = false) => {
+      return new Promise((resolve) => {
+        let activeTimer = null;
+        let hasReceivedFirstByte = false;
+        let sseBuffer = "";
+        let accumulatedText = "";
+        let accumulatedThinking = "";
+
+        const clearActiveTimer = () => {
+          if (activeTimer) {
+            clearTimeout(activeTimer);
+            activeTimer = null;
           }
-          // 只要数据流在持续流动，每次接收到数据块均自动刷新心跳计时器
-          setTimer(rollingInactivityMs, "数据流传输静默超时 (90s)，服务端可能已意外断开");
-          responseBody += chunk;
+        };
 
-          // 若开启了流式模式且响应正常，进行实时 SSE 事件流解析
-          if (stream && res.statusCode >= 200 && res.statusCode < 300) {
-            sseBuffer += chunk;
-            const lines = sseBuffer.split(/\r?\n/);
-            sseBuffer = lines.pop() || "";
-
-            for (const line of lines) {
-              const trimmedLine = line.trim();
-              if (!trimmedLine || !trimmedLine.startsWith("data:")) continue;
-              const dataStr = trimmedLine.replace(/^data:\s*/, "");
-              if (dataStr === "[DONE]") continue;
-
-              try {
-                const parsed = JSON.parse(dataStr);
-                // 1. OpenAI 兼容流式 Delta
-                const choice = parsed.choices?.[0];
-                const deltaText = choice?.delta?.content || "";
-                const deltaThinking = choice?.delta?.reasoning_content || choice?.delta?.reasoning || "";
-
-                // 2. Anthropic 原生流式 Delta
-                let anthropicText = "";
-                let anthropicThinking = "";
-                if (parsed.type === "content_block_delta") {
-                  if (parsed.delta?.type === "text_delta") anthropicText = parsed.delta.text || "";
-                  if (parsed.delta?.type === "thinking_delta") anthropicThinking = parsed.delta.thinking || "";
+        const setTimer = (ms, reason) => {
+          clearActiveTimer();
+          activeTimer = setTimeout(() => {
+            req.destroy();
+            resolve({
+              ok: false,
+              status: 408,
+              statusText: "Request Timeout",
+              body: JSON.stringify({
+                error: {
+                  message: reason
                 }
+              }),
+              canRetry: !hasReceivedFirstByte
+            });
+          }, ms);
+        };
 
-                const contentDelta = deltaText || anthropicText;
-                const thinkingDelta = deltaThinking || anthropicThinking;
+        const options = {
+          hostname: parsedUrl.hostname,
+          port: parsedUrl.port || (isHttps ? 443 : 80),
+          path: parsedUrl.path,
+          method: "POST",
+          headers: baseHeaders,
+          // 若重试或对端单向重置，强制禁用 Agent 缓存 (新建全新 TCP 握手，规避 Half-Open 假死 Socket)
+          agent: forceNewConnection ? false : undefined
+        };
 
-                if (contentDelta) accumulatedText += contentDelta;
-                if (thinkingDelta) accumulatedThinking += thinkingDelta;
+        const req = client.request(options, (res) => {
+          let responseBody = "";
+          res.setEncoding("utf8");
 
-                if ((contentDelta || thinkingDelta) && !event.sender.isDestroyed()) {
-                  event.sender.send("llm-stream-chunk", {
-                    streamId,
-                    contentDelta,
-                    thinkingDelta,
-                    isDone: false
-                  });
+          res.on("data", (chunk) => {
+            if (!hasReceivedFirstByte) {
+              hasReceivedFirstByte = true;
+            }
+            // 只要数据流在持续流动，每次接收到数据块均自动刷新心跳计时器
+            setTimer(rollingInactivityMs, "数据流传输静默超时 (90s)，服务端可能已意外断开");
+            responseBody += chunk;
+
+            // 若开启了流式模式且响应正常，进行实时 SSE 事件流解析
+            if (stream && res.statusCode >= 200 && res.statusCode < 300) {
+              sseBuffer += chunk;
+              const lines = sseBuffer.split(/\r?\n/);
+              sseBuffer = lines.pop() || "";
+
+              for (const line of lines) {
+                const trimmedLine = line.trim();
+                if (!trimmedLine || !trimmedLine.startsWith("data:")) continue;
+                const dataStr = trimmedLine.replace(/^data:\s*/, "");
+                if (dataStr === "[DONE]") continue;
+
+                try {
+                  const parsed = JSON.parse(dataStr);
+                  // 1. OpenAI 兼容流式 Delta
+                  const choice = parsed.choices?.[0];
+                  const deltaText = choice?.delta?.content || "";
+                  const deltaThinking = choice?.delta?.reasoning_content || choice?.delta?.reasoning || "";
+
+                  // 2. Anthropic 原生流式 Delta
+                  let anthropicText = "";
+                  let anthropicThinking = "";
+                  if (parsed.type === "content_block_delta") {
+                    if (parsed.delta?.type === "text_delta") anthropicText = parsed.delta.text || "";
+                    if (parsed.delta?.type === "thinking_delta") anthropicThinking = parsed.delta.thinking || "";
+                  }
+
+                  const contentDelta = deltaText || anthropicText;
+                  const thinkingDelta = deltaThinking || anthropicThinking;
+
+                  if (contentDelta) accumulatedText += contentDelta;
+                  if (thinkingDelta) accumulatedThinking += thinkingDelta;
+
+                  if ((contentDelta || thinkingDelta) && !event.sender.isDestroyed()) {
+                    event.sender.send("llm-stream-chunk", {
+                      streamId,
+                      contentDelta,
+                      thinkingDelta,
+                      isDone: false
+                    });
+                  }
+                } catch (e) {
+                  // 部分未完整的 JSON 片段忽略，等待下个 chunk 拼接
                 }
-              } catch (e) {
-                // 部分未完整的 JSON 片段忽略，等待下个 chunk 拼接
               }
             }
-          }
-        });
+          });
 
-        res.on("end", () => {
-          clearActiveTimer();
-          if (stream && !event.sender.isDestroyed()) {
-            event.sender.send("llm-stream-chunk", {
-              streamId,
-              isDone: true
+          res.on("end", () => {
+            clearActiveTimer();
+            if (stream && !event.sender.isDestroyed()) {
+              event.sender.send("llm-stream-chunk", {
+                streamId,
+                isDone: true
+              });
+            }
+
+            // 如果是流式模式，返回已组装好的统一格式，兼容后续兜底消费
+            let finalBody = responseBody;
+            if (stream && accumulatedText) {
+              finalBody = JSON.stringify({
+                choices: [{
+                  message: {
+                    content: accumulatedText,
+                    reasoning_content: accumulatedThinking
+                  }
+                }]
+              });
+            }
+
+            resolve({
+              ok: res.statusCode >= 200 && res.statusCode < 300,
+              status: res.statusCode,
+              statusText: res.statusMessage,
+              body: finalBody,
+              canRetry: false
             });
-          }
-
-          // 如果是流式模式，返回已组装好的统一格式，兼容后续兜底消费
-          let finalBody = responseBody;
-          if (stream && accumulatedText) {
-            finalBody = JSON.stringify({
-              choices: [{
-                message: {
-                  content: accumulatedText,
-                  reasoning_content: accumulatedThinking
-                }
-              }]
-            });
-          }
-
-          resolve({
-            ok: res.statusCode >= 200 && res.statusCode < 300,
-            status: res.statusCode,
-            statusText: res.statusMessage,
-            body: finalBody
           });
         });
-      });
 
-      req.on("error", (e) => {
-        clearActiveTimer();
-        resolve({
-          ok: false,
-          status: 0,
-          statusText: "Network Error",
-          body: JSON.stringify({ error: { message: e.message } })
+        req.on("error", (e) => {
+          clearActiveTimer();
+          // 若在此之前没有任何数据流吐出，且属于瞬态网络层中断，判定为可弹性重试
+          const isTransientNetworkError =
+            e.code === 'ECONNRESET' ||
+            e.code === 'ETIMEDOUT' ||
+            e.code === 'ECONNREFUSED' ||
+            e.code === 'EPIPE' ||
+            (e.message && (
+              e.message.includes('ECONNRESET') ||
+              e.message.includes('socket hang up') ||
+              e.message.includes('aborted')
+            ));
+
+          resolve({
+            ok: false,
+            status: 0,
+            statusText: "Network Error",
+            body: JSON.stringify({ error: { message: e.message, code: e.code } }),
+            canRetry: !hasReceivedFirstByte && isTransientNetworkError
+          });
         });
+
+        // 初始化启动首包等待计时器
+        setTimer(
+          adaptiveInitialMs,
+          `首包响应等待超时 (${Math.round(adaptiveInitialMs / 1000)}s)，当前为长任务或中转站排队中，请检查中转站响应速度`
+        );
+
+        req.write(postData);
+        req.end();
+      });
+    };
+
+    // 弹性自愈重试调度器：最多重试 2 次（总计最多尝试 3 次），重试前短暂指数退避并强制新建连接
+    const maxRetries = 2;
+    let attempt = 0;
+    let currentResult = null;
+
+    while (attempt <= maxRetries) {
+      const forceNew = attempt > 0;
+      currentResult = await runAttempt(attempt, forceNew);
+      if (currentResult.ok || !currentResult.canRetry || attempt === maxRetries) {
+        break;
+      }
+      attempt++;
+      // 指数退避等待 (第1次重试等 600ms, 第2次重试等 1200ms)
+      await new Promise(r => setTimeout(r, attempt * 600));
+    }
+
+    return {
+      ok: currentResult.ok,
+      status: currentResult.status,
+      statusText: currentResult.statusText,
+      body: currentResult.body
+    };
+  });
+
+  // ---------------------------------------------------------------------------
+  // 主进程权威安全沙箱状态机 (Authoritative Security Sandbox State Machine)
+  // ---------------------------------------------------------------------------
+  const SecuritySandbox = {
+    activeWorkspaceDir: null,
+    permissionMode: "workspace-readonly", // "workspace-readonly" | "full-access"
+    policyPath: path.join(os.homedir(), ".codex", "security-policy.json"),
+    auditLogPath: path.join(os.homedir(), ".codex", "audit.log"),
+
+    init() {
+      try {
+        if (fs.existsSync(this.policyPath)) {
+          const raw = fs.readFileSync(this.policyPath, "utf8");
+          const data = JSON.parse(raw);
+          if (data.activeWorkspaceDir && fs.existsSync(data.activeWorkspaceDir)) {
+            this.activeWorkspaceDir = fs.realpathSync(data.activeWorkspaceDir);
+          }
+          if (data.permissionMode === "workspace-readonly" || data.permissionMode === "full-access") {
+            this.permissionMode = data.permissionMode;
+          }
+        }
+      } catch (e) {
+        // 容错保持默认
+      }
+    },
+
+    save() {
+      try {
+        const dir = path.dirname(this.policyPath);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(this.policyPath, JSON.stringify({
+          activeWorkspaceDir: this.activeWorkspaceDir,
+          permissionMode: this.permissionMode,
+          updatedAt: new Date().toISOString()
+        }, null, 2), "utf8");
+      } catch (e) {
+        // 容错
+      }
+    },
+
+    logAudit(action, targetPath, details = "") {
+      try {
+        const dir = path.dirname(this.auditLogPath);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        const record = `[${new Date().toISOString()}] [${this.permissionMode}] ${action} -> ${targetPath} ${details}\n`;
+        fs.appendFileSync(this.auditLogPath, record, "utf8");
+      } catch (e) {
+        // 容错
+      }
+    }
+  };
+
+  SecuritySandbox.init();
+
+  // ---------------------------------------------------------------------------
+  // 工作区目录选择与权限管理 (主进程绝对权威)
+  // ---------------------------------------------------------------------------
+  ipcMain.handle("select-workspace-dir", async () => {
+    const win = mainWindow || BrowserWindow.getFocusedWindow();
+    const result = await dialog.showOpenDialog(win, {
+      title: "选择工程工作区目录",
+      properties: ["openDirectory", "createDirectory"]
+    });
+    if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+      return null;
+    }
+    try {
+      const realDir = fs.realpathSync(result.filePaths[0]);
+      SecuritySandbox.activeWorkspaceDir = realDir;
+      SecuritySandbox.save();
+      return realDir;
+    } catch (err) {
+      SecuritySandbox.activeWorkspaceDir = result.filePaths[0];
+      SecuritySandbox.save();
+      return result.filePaths[0];
+    }
+  });
+
+  ipcMain.handle("get-security-status", async () => {
+    return {
+      activeWorkspaceDir: SecuritySandbox.activeWorkspaceDir,
+      permissionMode: SecuritySandbox.permissionMode
+    };
+  });
+
+  ipcMain.handle("set-permission-mode", async (_event, targetMode) => {
+    if (targetMode !== "workspace-readonly" && targetMode !== "full-access") {
+      return {
+        ok: false,
+        error: "无效的权限模式",
+        permissionMode: SecuritySandbox.permissionMode
+      };
+    }
+
+    // 从工作区只读提升至全局受信任模式时，强制触发原生系统级警告确认弹窗 (防前端脚本与 XSS 自动提权)
+    if (targetMode === "full-access" && SecuritySandbox.permissionMode !== "full-access") {
+      const win = mainWindow || BrowserWindow.getFocusedWindow();
+      const choice = await dialog.showMessageBox(win, {
+        type: "warning",
+        buttons: ["取消", "确认提升为全局受信任"],
+        defaultId: 0,
+        cancelId: 0,
+        title: "安全权限提升确认",
+        message: "确定将 Agent 运行权限提升至【全局受信任】模式吗？",
+        detail: "警告：全局受信任模式允许 Agent 跨越当前工作区，读取本机任意系统路径下的文件（包括环境配置、系统依赖等）。\n\n请确认当前对话环境值得信赖。"
       });
 
-      // 初始化启动首包等待计时器
-      setTimer(
-        adaptiveInitialMs,
-        `首包响应等待超时 (${Math.round(adaptiveInitialMs / 1000)}s)，当前为长任务或中转站排队中，请检查中转站响应速度`
-      );
+      if (choice.response !== 1) {
+        return {
+          ok: false,
+          canceled: true,
+          permissionMode: SecuritySandbox.permissionMode
+        };
+      }
+    }
 
-      req.write(postData);
-      req.end();
-    });
+    SecuritySandbox.permissionMode = targetMode;
+    SecuritySandbox.save();
+    SecuritySandbox.logAudit("PERMISSION_MODE_CHANGED", targetMode);
+
+    return {
+      ok: true,
+      permissionMode: SecuritySandbox.permissionMode
+    };
+  });
+
+  // ---------------------------------------------------------------------------
+  // 权威安全沙箱文件读取通道 (渲染进程仅能传 relativePath)
+  // ---------------------------------------------------------------------------
+  ipcMain.handle("read-workspace-file", async (_event, payload) => {
+    const relativePath = typeof payload === "string" ? payload : payload?.relativePath;
+    if (!relativePath || typeof relativePath !== "string") {
+      return {
+        ok: false,
+        code: "INVALID_ARGUMENT",
+        reason: "文件相对路径不能为空",
+        hint: "请指定有效的文件路径"
+      };
+    }
+
+    const mode = SecuritySandbox.permissionMode;
+    const workspace = SecuritySandbox.activeWorkspaceDir;
+
+    let candidatePath = "";
+
+    if (mode === "workspace-readonly") {
+      if (!workspace) {
+        return {
+          ok: false,
+          code: "NO_WORKSPACE",
+          reason: "当前尚未选定工作区工程目录",
+          hint: "请在左侧栏点击选择或切换工作区目录"
+        };
+      }
+
+      // 防字面穿透与拼接解析
+      candidatePath = path.resolve(workspace, relativePath);
+
+      if (!fs.existsSync(candidatePath)) {
+        return {
+          ok: false,
+          code: "NOT_FOUND",
+          reason: `文件不存在: ${relativePath}`,
+          hint: "请检查相对路径拼写是否正确"
+        };
+      }
+
+      // 核心安全防线：realpath 物理路径 Containment 检验 (彻底阻断 Symlink / Junction 软链接逃逸)
+      try {
+        const realWorkspace = fs.realpathSync(workspace);
+        const realTarget = fs.realpathSync(candidatePath);
+        const rel = path.relative(realWorkspace, realTarget);
+        const isContained = !rel.startsWith("..") && !path.isAbsolute(rel);
+
+        if (!isContained) {
+          SecuritySandbox.logAudit("BLOCKED_SYMLINK_OR_TRAVERSAL", candidatePath);
+          return {
+            ok: false,
+            code: "PERMISSION_DENIED",
+            reason: "目标文件指向工作区外部物理路径 (软链接逃逸或越权穿透已拦截)",
+            hint: "当前为工作区只读模式，严禁访问工作区外部物理文件"
+          };
+        }
+        candidatePath = realTarget;
+      } catch (err) {
+        return {
+          ok: false,
+          code: "REALPATH_ERROR",
+          reason: `解析文件物理路径失败: ${err.message}`,
+          hint: "文件可能为损坏的无效链接"
+        };
+      }
+    } else {
+      // 全局受信任模式 (full-access)
+      candidatePath = workspace ? path.resolve(workspace, relativePath) : path.resolve(relativePath);
+      if (!fs.existsSync(candidatePath)) {
+        return {
+          ok: false,
+          code: "NOT_FOUND",
+          reason: `文件不存在: ${relativePath}`,
+          hint: "请检查路径拼写是否正确"
+        };
+      }
+      try {
+        candidatePath = fs.realpathSync(candidatePath);
+      } catch (err) {
+        // 保持原样
+      }
+
+      // 敏感路径审计留痕
+      const lower = candidatePath.toLowerCase();
+      if (lower.includes(".ssh") || lower.includes(".env") || lower.includes("id_rsa") || lower.includes("credentials")) {
+        SecuritySandbox.logAudit("READ_SENSITIVE_FILE", candidatePath);
+      }
+    }
+
+    try {
+      const stat = fs.statSync(candidatePath);
+      if (stat.isDirectory()) {
+        return {
+          ok: false,
+          code: "IS_DIRECTORY",
+          reason: `指定路径为目录而非可读文件: ${relativePath}`,
+          hint: "请指定具体代码或文本文件路径"
+        };
+      }
+
+      // 二进制文件嗅探 (读取前 512 字节探测 null byte)
+      const sampleSize = Math.min(512, stat.size);
+      if (sampleSize > 0) {
+        const fd = fs.openSync(candidatePath, "r");
+        const sampleBuf = Buffer.alloc(sampleSize);
+        fs.readSync(fd, sampleBuf, 0, sampleSize, 0);
+        fs.closeSync(fd);
+
+        let hasNullByte = false;
+        for (let i = 0; i < sampleSize; i++) {
+          if (sampleBuf[i] === 0) {
+            hasNullByte = true;
+            break;
+          }
+        }
+        if (hasNullByte) {
+          return {
+            ok: false,
+            code: "BINARY_FILE_REJECTED",
+            reason: `目标文件包含二进制空字节，已拒绝读取: ${relativePath}`,
+            hint: "仅支持读取文本与代码文件，防止乱码污染模型上下文"
+          };
+        }
+      }
+
+      // 精确以 128KB 字节 (131072 字节) 为截断边界
+      const MAX_BYTES = 128 * 1024;
+      let isTruncated = false;
+      let content = "";
+
+      if (stat.size > MAX_BYTES) {
+        isTruncated = true;
+        const fd = fs.openSync(candidatePath, "r");
+        const buf = Buffer.alloc(MAX_BYTES);
+        fs.readSync(fd, buf, 0, MAX_BYTES, 0);
+        fs.closeSync(fd);
+        content = buf.toString("utf8") + `\n\n[⚠️ 系统提示: 文件总大小 (${Math.round(stat.size / 1024)}KB) 超出限制，当前仅截取前 128KB 字节内容，剩余部分已略去]`;
+      } else {
+        content = fs.readFileSync(candidatePath, "utf8");
+      }
+
+      return {
+        ok: true,
+        relativePath,
+        fullPath: candidatePath,
+        content,
+        isTruncated,
+        totalBytes: stat.size,
+        permissionMode: mode
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        code: "READ_ERROR",
+        reason: `读取文件失败: ${err.message}`,
+        hint: "请确认文件未被其他系统进程独占"
+      };
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // 带有规模控制 (200项上限 + 深度截断 + 黑名单) 的工作区文件树读取
+  // ---------------------------------------------------------------------------
+  ipcMain.handle("read-workspace-tree", async (_event, dirPath) => {
+    const targetDir = (typeof dirPath === "string" && dirPath) ? dirPath : SecuritySandbox.activeWorkspaceDir;
+    if (!targetDir || typeof targetDir !== "string") return null;
+    try {
+      if (!fs.existsSync(targetDir)) return null;
+      const realTarget = fs.realpathSync(targetDir);
+
+      const IGNORED = new Set([
+        "node_modules", ".git", ".svn", ".hg", "dist", "build", ".cache",
+        ".vscode", ".idea", ".agent", "release", "coverage", ".next", ".nuxt",
+        "package-lock.json", "yarn.lock", "pnpm-lock.yaml"
+      ]);
+
+      let totalItemCount = 0;
+      const MAX_TOTAL_ITEMS = 200; // 硬截断阈值，防止大项目撑爆
+
+      function buildTree(currentPath, depth = 0) {
+        if (depth > 3 || totalItemCount >= MAX_TOTAL_ITEMS) return [];
+        const entries = fs.readdirSync(currentPath, { withFileTypes: true });
+        const items = [];
+
+        entries.sort((a, b) => {
+          if (a.isDirectory() === b.isDirectory()) {
+            return a.name.localeCompare(b.name);
+          }
+          return a.isDirectory() ? -1 : 1;
+        });
+
+        for (const entry of entries) {
+          if (totalItemCount >= MAX_TOTAL_ITEMS) break;
+          if (entry.name.startsWith(".") && entry.name !== ".env" && entry.name !== ".gitignore") {
+            continue;
+          }
+          if (IGNORED.has(entry.name)) continue;
+
+          totalItemCount++;
+          const fullPath = path.join(currentPath, entry.name);
+          const relativePath = path.relative(realTarget, fullPath).replace(/\\/g, "/");
+
+          if (entry.isDirectory()) {
+            items.push({
+              name: entry.name,
+              path: relativePath,
+              fullPath,
+              isDirectory: true,
+              children: buildTree(fullPath, depth + 1)
+            });
+          } else if (entry.isFile()) {
+            items.push({
+              name: entry.name,
+              path: relativePath,
+              fullPath,
+              isDirectory: false
+            });
+          }
+        }
+        return items;
+      }
+
+      const tree = buildTree(realTarget, 0);
+
+      return {
+        rootPath: realTarget,
+        rootName: path.basename(realTarget),
+        tree,
+        totalCount: totalItemCount,
+        isTruncated: totalItemCount >= MAX_TOTAL_ITEMS
+      };
+    } catch (err) {
+      return { error: err.message };
+    }
   });
 
 app.whenReady().then(() => {

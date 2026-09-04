@@ -17,7 +17,7 @@ import { useTabQueue } from '@/hooks/useTabQueue';
 import { useUpdater } from '@/hooks/useUpdater';
 
 import { AttachedImage, ChatMessage } from '@/types/session';
-import { SkillItem } from '@/types/electron';
+import { SkillItem, PermissionMode } from '@/types/electron';
 import { Download, Layers } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -56,6 +56,31 @@ export const App: React.FC = () => {
   const [lightboxImg, setLightboxImg] = useState<string | null>(null);
   const [inputPrompt, setInputPrompt] = useState('');
   const [skills, setSkills] = useState<SkillItem[]>([]);
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>('workspace-readonly');
+  const [activeWorkspaceDir, setActiveWorkspaceDir] = useState<string | null>(null);
+
+  // 同步主进程权威安全沙箱状态
+  useEffect(() => {
+    if (window.codexDesktop?.getSecurityStatus) {
+      window.codexDesktop.getSecurityStatus().then(st => {
+        if (st) {
+          if (st.permissionMode) setPermissionMode(st.permissionMode);
+          if (st.activeWorkspaceDir) setActiveWorkspaceDir(st.activeWorkspaceDir);
+        }
+      });
+    }
+  }, []);
+
+  const handleSelectPermissionMode = async (mode: PermissionMode) => {
+    if (window.codexDesktop?.setPermissionMode) {
+      const res = await window.codexDesktop.setPermissionMode(mode);
+      if (res && res.ok) {
+        setPermissionMode(res.permissionMode);
+      }
+    } else {
+      setPermissionMode(mode);
+    }
+  };
 
   // 加载 43 项全流程技能库
   useEffect(() => {
@@ -185,6 +210,48 @@ export const App: React.FC = () => {
         });
       }
 
+      // 2. 注入当前工作区与安全权限规范 (Workspace Context Injection)
+      let workspaceSystemPrompt = '';
+      if (activeWorkspaceDir) {
+        let treeOutline = '';
+        if (window.codexDesktop?.readWorkspaceTree) {
+          try {
+            const treeRes = await window.codexDesktop.readWorkspaceTree(activeWorkspaceDir);
+            if (treeRes && treeRes.tree) {
+              const nodes: string[] = [];
+              const walk = (items: any[], indent = '') => {
+                for (const it of items) {
+                  if (nodes.length >= 60) break;
+                  nodes.push(`${indent}- ${it.name}${it.isDirectory ? '/' : ''}`);
+                  if (it.children) walk(it.children, indent + '  ');
+                }
+              };
+              walk(treeRes.tree);
+              treeOutline = nodes.join('\n');
+              if (treeRes.totalCount && treeRes.totalCount > 60) {
+                treeOutline += `\n... [工程规模较大，共计 ${treeRes.totalCount} 项，已略去后续条目，可输入具体文件名或使用 @ 引用]`;
+              }
+            }
+          } catch (e) {
+            // 容错保持空白
+          }
+        }
+
+        const isFullAccess = permissionMode === 'full-access';
+        workspaceSystemPrompt = `【当前工作区工程环境与安全运行权限】\n` +
+          `- 本地工作区根目录: ${activeWorkspaceDir}\n` +
+          `- 运行权限等级: ${isFullAccess ? '🌐 全局受信任模式 (Full Access)' : '🛡️ 工作区只读模式 (Workspace Read-Only - 默认推荐)'}\n` +
+          `- 权限规约: ${isFullAccess ? '你拥有全局跨工程文件阅读权限。' : '你当前受限于工作区只读安全沙箱，仅能分析已挂载工程内的代码，严禁越权访问外部物理路径，严禁生成未经授权的破坏性指令。'}\n` +
+          (treeOutline ? `- 当前工程核心结构大纲:\n${treeOutline}\n` : '');
+      }
+
+      if (workspaceSystemPrompt) {
+        contextMessages.push({
+          role: 'system',
+          content: workspaceSystemPrompt
+        });
+      }
+
       (currentSession.messages || []).slice(-10).forEach(m => {
         contextMessages.push({
           role: m.role,
@@ -192,7 +259,37 @@ export const App: React.FC = () => {
         });
       });
 
-      contextMessages.push({ role: 'user', content: actualUserPrompt });
+      // 3. 智能关联工作区文件内容 (@引用文件或“分析文件夹”请求)
+      let finalUserContent = actualUserPrompt;
+      const atFileMatches = Array.from(actualUserPrompt.matchAll(/@([a-zA-Z0-9_\-./\\]+\.[a-zA-Z0-9]+)/g)).map(m => m[1]);
+      const isAnalyzingWorkspace = /分析.*(文件夹|工程|项目|代码库)/i.test(actualUserPrompt);
+      const filesToRead = new Set(atFileMatches);
+
+      if (isAnalyzingWorkspace && filesToRead.size === 0 && activeWorkspaceDir) {
+        filesToRead.add('package.json');
+        filesToRead.add('README.md');
+      }
+
+      if (filesToRead.size > 0 && window.codexDesktop?.readWorkspaceFile) {
+        const attachedContents: string[] = [];
+        for (const rel of filesToRead) {
+          try {
+            const fileRes = await window.codexDesktop.readWorkspaceFile(rel);
+            if (fileRes.ok && fileRes.content) {
+              attachedContents.push(`【文件挂载: ${rel}】\n\`\`\`\n${fileRes.content}\n\`\`\``);
+            } else if (!fileRes.ok && fileRes.code !== 'NOT_FOUND') {
+              attachedContents.push(`【文件读取受限: ${rel}】: ${fileRes.reason || fileRes.code}`);
+            }
+          } catch (e) {
+            // 容错
+          }
+        }
+        if (attachedContents.length > 0) {
+          finalUserContent = `${actualUserPrompt}\n\n=== 上下文关联文件内容 ===\n${attachedContents.join('\n\n')}`;
+        }
+      }
+
+      contextMessages.push({ role: 'user', content: finalUserContent });
 
       let response: { content?: string; thinking?: string; toolCall?: any } | null = null;
       const streamId = 'stream_' + Date.now();
@@ -291,11 +388,32 @@ export const App: React.FC = () => {
         }
       }
     } catch (err: any) {
+      let rawMsg = err.message || '网络连接超时或提供方异常';
+      let friendlyError = rawMsg;
+
+      try {
+        const parsed = JSON.parse(rawMsg);
+        const innerMsg = parsed?.error?.message || parsed?.message || parsed?.error;
+        if (typeof innerMsg === 'string') {
+          friendlyError = innerMsg;
+        }
+      } catch {
+        // 保持原样
+      }
+
+      if (friendlyError.includes('ECONNRESET')) {
+        friendlyError = '网络连接被服务商/代理强行重置 (read ECONNRESET)。已自动重试 2 次仍未连通，通常为模型服务商网关抖动或网络代理切断，建议稍后重试。';
+      } else if (friendlyError.includes('ETIMEDOUT') || friendlyError.includes('Request Timeout') || friendlyError.includes('首包响应等待超时')) {
+        friendlyError = '模型服务商响应超时，当前排队或模型负荷过高，请检查网络或稍后重试。';
+      } else if (friendlyError.includes('socket hang up')) {
+        friendlyError = '网络连接被意外挂断 (socket hang up)，请检查模型服务商或中转站稳定性。';
+      }
+
       updateLastMessageInCurrentSession(prev => ({
         ...prev,
         content: prev.content
-          ? `${prev.content}\n\n❌ [传输中断]: ${err.message}`
-          : `❌ 请求失败: ${err.message || '网络连接超时或提供方异常'}`,
+          ? `${prev.content}\n\n❌ [传输中断]: ${friendlyError}`
+          : `❌ 请求失败: ${friendlyError}`,
         thinking: '执行异常'
       }));
     } finally {
@@ -321,6 +439,7 @@ export const App: React.FC = () => {
           onOpenSettings={() => setIsSettingsOpen(true)}
           onOpenTheme={() => setIsThemeOpen(true)}
           onOpenAbout={() => setIsAboutOpen(true)}
+          onWorkspaceChange={setActiveWorkspaceDir}
         />
 
         {/* 中间主工作台 */}
@@ -380,6 +499,8 @@ export const App: React.FC = () => {
             inputPrompt={inputPrompt}
             setInputPrompt={setInputPrompt}
             skills={skills}
+            permissionMode={permissionMode}
+            onSelectPermissionMode={handleSelectPermissionMode}
           />
         </main>
 
