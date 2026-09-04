@@ -6,12 +6,14 @@ interface AboutModalProps {
   isOpen: boolean;
   onClose: () => void;
   onCheckUpdates: () => void;
+  onOpenFeedback?: () => void;
 }
 
 export const AboutModal: React.FC<AboutModalProps> = ({
   isOpen,
   onClose,
   onCheckUpdates,
+  onOpenFeedback,
 }) => {
   const [info, setInfo] = useState<AppInfo | null>(null);
 
@@ -91,13 +93,27 @@ export const AboutModal: React.FC<AboutModalProps> = ({
 
         {/* Footer */}
         <div className="p-4 border-t border-border bg-bg-sidebar flex items-center justify-between">
-          <button
-            onClick={onCheckUpdates}
-            className="flex items-center gap-1.5 px-3 py-1.5 border border-border hover:bg-bg-hover text-text-primary rounded-lg text-xs font-medium transition-colors"
-          >
-            <RefreshCw size={13} />
-            <span>检查更新...</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onCheckUpdates}
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-border hover:bg-bg-hover text-text-primary rounded-lg text-xs font-medium transition-colors cursor-pointer"
+            >
+              <RefreshCw size={13} />
+              <span>检查更新...</span>
+            </button>
+            {onOpenFeedback && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenFeedback();
+                }}
+                className="flex items-center gap-1 px-3 py-1.5 border border-border hover:bg-bg-hover text-text-secondary hover:text-red-400 rounded-lg text-xs font-medium transition-colors cursor-pointer"
+              >
+                <span>🐞 问题反馈</span>
+              </button>
+            )}
+          </div>
           <button
             onClick={onClose}
             className="px-4 py-1.5 bg-accent hover:bg-accent-secondary text-white rounded-lg text-xs font-semibold"

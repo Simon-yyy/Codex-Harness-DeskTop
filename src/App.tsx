@@ -7,6 +7,7 @@ import { StatusBar } from '@/components/StatusBar';
 import { SettingsModal } from '@/components/Modals/SettingsModal';
 import { ThemeModal } from '@/components/Modals/ThemeModal';
 import { AboutModal } from '@/components/Modals/AboutModal';
+import { FeedbackModal } from '@/components/Modals/FeedbackModal';
 import { UpdatePromptModal } from '@/components/Modals/UpdatePromptModal';
 import { ImageLightbox } from '@/components/Modals/ImageLightbox';
 
@@ -17,7 +18,7 @@ import { useTabQueue } from '@/hooks/useTabQueue';
 import { useUpdater } from '@/hooks/useUpdater';
 
 import { AttachedImage, ChatMessage } from '@/types/session';
-import { SkillItem, PermissionMode } from '@/types/electron';
+import { SkillItem, PermissionMode, WorkspaceFileItem } from '@/types/electron';
 import { Download, Layers } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -29,6 +30,10 @@ export const App: React.FC = () => {
     setCurrentSessionId,
     currentSession,
     createNewSession,
+    renameSession,
+    updateCurrentSessionWorkspace,
+    forkSession,
+    toggleArchiveSession,
     deleteSession,
     addMessageToCurrentSession,
     updateLastMessageInCurrentSession,
@@ -50,9 +55,15 @@ export const App: React.FC = () => {
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [previewFile, setPreviewFile] = useState<{
+    title: string;
+    filePath?: string;
+    codeContent: string;
+  } | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isThemeOpen, setIsThemeOpen] = useState(false);
   const [isAboutOpen, setIsAboutOpen] = useState(false);
+  const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
   const [lightboxImg, setLightboxImg] = useState<string | null>(null);
   const [inputPrompt, setInputPrompt] = useState('');
   const [skills, setSkills] = useState<SkillItem[]>([]);
@@ -82,6 +93,52 @@ export const App: React.FC = () => {
     }
   };
 
+  // 切换会话：若该会话已绑定特定工作区，自动无缝恢复该工作区目录
+  const handleSelectSession = (sessionId: string) => {
+    setCurrentSessionId(sessionId);
+    const target = sessions.find(s => s.id === sessionId);
+    if (target && target.workspaceDir && target.workspaceDir !== activeWorkspaceDir) {
+      setActiveWorkspaceDir(target.workspaceDir);
+      if (window.codexDesktop?.setWorkspaceDir) {
+        window.codexDesktop.setWorkspaceDir(target.workspaceDir);
+      }
+    }
+  };
+
+  // 切换或挂载新工作区：同步绑定至当前活跃会话
+  const handleWorkspaceChange = (path: string) => {
+    setActiveWorkspaceDir(path);
+    const folderName = path.replace(/[\\/]$/, '').split(/[\\/]/).pop() || '工程';
+    updateCurrentSessionWorkspace(path, folderName);
+  };
+
+  // 点击左侧文件树中任一文件：安全沙箱内读取源码并展开右侧预览抽屉
+  const handleSelectFile = async (item: WorkspaceFileItem) => {
+    if (item.isDirectory) return;
+    try {
+      if (window.codexDesktop?.readWorkspaceFile) {
+        const res = await window.codexDesktop.readWorkspaceFile(item.path);
+        if (res && res.content !== undefined) {
+          setPreviewFile({
+            title: item.name,
+            filePath: item.path,
+            codeContent: res.content,
+          });
+          setIsPreviewOpen(true);
+          return;
+        }
+      }
+    } catch (err) {
+      console.error('读取预览文件异常:', err);
+    }
+    setPreviewFile({
+      title: item.name,
+      filePath: item.path,
+      codeContent: `// 无法读取或内容为空: ${item.path}`,
+    });
+    setIsPreviewOpen(true);
+  };
+
   // 加载 43 项全流程技能库
   useEffect(() => {
     if (window.codexDesktop && window.codexDesktop.getSkills) {
@@ -95,18 +152,22 @@ export const App: React.FC = () => {
   useEffect(() => {
     if (window.codexDesktop && window.codexDesktop.onMenuAction) {
       window.codexDesktop.onMenuAction((action) => {
-        if (action === 'new-chat') createNewSession(selectedModel);
+        if (action === 'new-chat') {
+          const folderName = activeWorkspaceDir ? activeWorkspaceDir.replace(/[\\/]$/, '').split(/[\\/]/).pop() : undefined;
+          createNewSession(selectedModel, activeWorkspaceDir || undefined, folderName);
+        }
         if (action === 'export-chat') exportCurrentSessionAsMarkdown();
         if (action === 'open-settings') setIsSettingsOpen(true);
         if (action === 'open-theme') setIsThemeOpen(true);
         if (action === 'open-about') setIsAboutOpen(true);
+        if (action === 'open-feedback') setIsFeedbackOpen(true);
         if (action.startsWith('theme:')) {
           const t = action.split(':')[1] as any;
           setTheme(t);
         }
       });
     }
-  }, [selectedModel]);
+  }, [selectedModel, activeWorkspaceDir]);
 
   // Tab Queueing 自动消费状态机
   useEffect(() => {
@@ -212,7 +273,11 @@ export const App: React.FC = () => {
 
       // 2. 注入当前工作区与安全权限规范 (Workspace Context Injection)
       let workspaceSystemPrompt = '';
-      if (activeWorkspaceDir) {
+      if (permissionMode === 'chat-only') {
+        workspaceSystemPrompt = `【当前运行安全权限: 🛡️ 纯对话咨询模式 (Chat Only)】\n` +
+          `- 隐私与安全隔离: 当前处于零文件纯对话模式，已完全屏蔽本地工程代码与文件树。\n` +
+          `- 行为规约: 请专注于解答用户的设计构想、概念咨询与逻辑推演，不假设也不尝试读取任何本地物理文件。`;
+      } else if (activeWorkspaceDir) {
         let treeOutline = '';
         if (window.codexDesktop?.readWorkspaceTree) {
           try {
@@ -237,11 +302,20 @@ export const App: React.FC = () => {
           }
         }
 
-        const isFullAccess = permissionMode === 'full-access';
+        let modeTitle = '📖 工作区只读模式 (Workspace Read-Only)';
+        let modeRule = '你当前处于工作区只读安全沙箱。当前环境采用【即时上下文全量注入架构】，请基于下方已提供的工作区大纲和上下文挂载文件，立即直接给出完整分析、代码诊断或推演方案。绝对严禁输出“让我读取核心文件...”等等待二次交互的中断性语句，严禁尝试发起工具调用。';
+        if (permissionMode === 'workspace-readwrite') {
+          modeTitle = '✍️ 工作区读写模式 (Workspace Read/Write - 自动编码)';
+          modeRule = '你拥有当前工程代码分析与实现权限。当前环境采用【即时上下文直注架构】，请直接输出完整可运行的修改后代码或补丁，严禁输出等待读取的中断性占位符，严禁尝试发起工具调用。';
+        } else if (permissionMode === 'full-access') {
+          modeTitle = '🌐 全局受信任模式 (Full Access)';
+          modeRule = '你拥有全局代码分析与调试权限。请直接基于上下文进行完整推理和方案交付。';
+        }
+
         workspaceSystemPrompt = `【当前工作区工程环境与安全运行权限】\n` +
           `- 本地工作区根目录: ${activeWorkspaceDir}\n` +
-          `- 运行权限等级: ${isFullAccess ? '🌐 全局受信任模式 (Full Access)' : '🛡️ 工作区只读模式 (Workspace Read-Only - 默认推荐)'}\n` +
-          `- 权限规约: ${isFullAccess ? '你拥有全局跨工程文件阅读权限。' : '你当前受限于工作区只读安全沙箱，仅能分析已挂载工程内的代码，严禁越权访问外部物理路径，严禁生成未经授权的破坏性指令。'}\n` +
+          `- 运行权限等级: ${modeTitle}\n` +
+          `- 核心准则: ${modeRule}\n` +
           (treeOutline ? `- 当前工程核心结构大纲:\n${treeOutline}\n` : '');
       }
 
@@ -252,31 +326,51 @@ export const App: React.FC = () => {
         });
       }
 
-      (currentSession.messages || []).slice(-10).forEach(m => {
-        contextMessages.push({
-          role: m.role,
-          content: m.content
+      // 清洗并加载历史消息 (过滤空 content 与截断占位符，防止污染模型多轮推理与触发 400 Bad Request)
+      (currentSession.messages || [])
+        .slice(-10)
+        .filter(m => m.content && typeof m.content === 'string' && m.content.trim().length > 0)
+        .forEach(m => {
+          let cleanedContent = m.content.trim();
+          if (m.role === 'assistant') {
+            cleanedContent = cleanedContent.replace(/(?:让我读取.*?[：:]|先从.*?开始[：:])\s*$/g, '').trim();
+          }
+          if (cleanedContent) {
+            contextMessages.push({
+              role: m.role,
+              content: cleanedContent
+            });
+          }
         });
-      });
 
-      // 3. 智能关联工作区文件内容 (@引用文件或“分析文件夹”请求)
+      // 3. 智能关联工作区文件内容 (@引用文件或工程分析/进度评估请求)
       let finalUserContent = actualUserPrompt;
       const atFileMatches = Array.from(actualUserPrompt.matchAll(/@([a-zA-Z0-9_\-./\\]+\.[a-zA-Z0-9]+)/g)).map(m => m[1]);
-      const isAnalyzingWorkspace = /分析.*(文件夹|工程|项目|代码库)/i.test(actualUserPrompt);
+      const isAnalyzingWorkspace = /(分析|评估|看|梳理|走读|做到|进度|现状|架构).*(文件夹|工程|项目|代码|哪一步|模块|系统)/i.test(actualUserPrompt) ||
+        /(项目|工程|代码).*(怎么样|到哪|进展)/i.test(actualUserPrompt);
       const filesToRead = new Set(atFileMatches);
 
       if (isAnalyzingWorkspace && filesToRead.size === 0 && activeWorkspaceDir) {
-        filesToRead.add('package.json');
-        filesToRead.add('README.md');
+        // 自动探测工程关键配置与入口文件（前几个有效文件自动切片挂载）
+        const candidateEntries = [
+          'package.json', 'README.md', 'main.js', 'src/App.tsx', 'src/main.tsx',
+          'src/index.ts', 'src/index.tsx', 'src/App.vue', 'Cargo.toml', 'go.mod'
+        ];
+        for (const candidate of candidateEntries) {
+          filesToRead.add(candidate);
+        }
       }
 
       if (filesToRead.size > 0 && window.codexDesktop?.readWorkspaceFile) {
         const attachedContents: string[] = [];
+        let attachedCount = 0;
         for (const rel of filesToRead) {
+          if (attachedCount >= 5) break; // 最多挂载 5 个关键入口文件，防止超长
           try {
             const fileRes = await window.codexDesktop.readWorkspaceFile(rel);
             if (fileRes.ok && fileRes.content) {
               attachedContents.push(`【文件挂载: ${rel}】\n\`\`\`\n${fileRes.content}\n\`\`\``);
+              attachedCount++;
             } else if (!fileRes.ok && fileRes.code !== 'NOT_FOUND') {
               attachedContents.push(`【文件读取受限: ${rel}】: ${fileRes.reason || fileRes.code}`);
             }
@@ -325,12 +419,13 @@ export const App: React.FC = () => {
 
         if (effectiveProtocol === 'anthropic') {
           if (!endpoint.endsWith('/messages')) endpoint += '/v1/messages';
+          const systemPrompts = contextMessages.filter(m => m.role === 'system').map(m => m.content).join('\n\n');
           body = {
             model: selectedModel,
             max_tokens: 4096,
             stream: true,
             messages: contextMessages.filter(m => m.role !== 'system'),
-            system: contextMessages.find(m => m.role === 'system')?.content
+            system: systemPrompts || undefined
           };
         } else if (effectiveProtocol === 'ollama') {
           if (!endpoint.endsWith('/chat/completions') && !endpoint.endsWith('/api/chat')) {
@@ -407,6 +502,15 @@ export const App: React.FC = () => {
         friendlyError = '模型服务商响应超时，当前排队或模型负荷过高，请检查网络或稍后重试。';
       } else if (friendlyError.includes('socket hang up')) {
         friendlyError = '网络连接被意外挂断 (socket hang up)，请检查模型服务商或中转站稳定性。';
+      } else if (
+        friendlyError.includes('unexpected EOF') ||
+        friendlyError.includes('stream reading error') ||
+        friendlyError.includes('STREAM_EOF') ||
+        friendlyError.includes('Stream EOF')
+      ) {
+        friendlyError = '流式传输中途被对端关闭 (unexpected EOF)，通常由中转站/Nginx 的连接超时或反向代理过早断流所致。若已有部分内容输出则已截断保留，可重新发送请求。';
+      } else if (friendlyError.includes('aborted')) {
+        friendlyError = '请求被中断 (aborted)，可能是网络环境不稳定或服务端主动中止，请检查代理设置后重试。';
       }
 
       updateLastMessageInCurrentSession(prev => ({
@@ -428,18 +532,25 @@ export const App: React.FC = () => {
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-bg-base text-text-primary">
       {/* 工作台三栏骨架 */}
       <div className="flex-1 flex overflow-hidden">
-        {/* 左侧一体化侧边栏 */}
+        {/* 左侧一体化侧边栏 (DSH 风格工作区树 + 会话分叉归档) */}
         <Sidebar
           sessions={sessions}
           currentSessionId={currentSessionId}
-          onSelectSession={setCurrentSessionId}
+          onSelectSession={handleSelectSession}
           onNewSession={() => createNewSession(selectedModel)}
+          onNewSessionInWorkspace={(wsDir, wsName) => createNewSession(selectedModel, wsDir, wsName)}
+          onForkSession={forkSession}
+          onArchiveSession={toggleArchiveSession}
           onDeleteSession={deleteSession}
-          onInsertPrompt={(text) => setInputPrompt(prev => prev + text)}
+          onRenameSession={renameSession}
+          onInsertPrompt={(text) => setInputPrompt(prev => prev ? `${prev} ${text}` : text)}
+          onSelectFile={handleSelectFile}
           onOpenSettings={() => setIsSettingsOpen(true)}
           onOpenTheme={() => setIsThemeOpen(true)}
           onOpenAbout={() => setIsAboutOpen(true)}
-          onWorkspaceChange={setActiveWorkspaceDir}
+          onOpenFeedback={() => setIsFeedbackOpen(true)}
+          activeWorkspaceDir={activeWorkspaceDir}
+          onWorkspaceChange={handleWorkspaceChange}
         />
 
         {/* 中间主工作台 */}
@@ -454,6 +565,31 @@ export const App: React.FC = () => {
               <span className="text-text-primary font-bold truncate max-w-sm">
                 {currentSession.title || '新会话'}
               </span>
+              {currentSession.workspaceName ? (
+                <button
+                  type="button"
+                  onClick={() => updateCurrentSessionWorkspace('', '')}
+                  className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-accent/10 border border-accent/20 text-accent font-mono text-[10px] truncate max-w-[130px] hover:bg-accent/20 transition-colors cursor-pointer"
+                  title={`当前会话已归档至工程: ${currentSession.workspaceDir}\n点击可解绑移出工程（转为通用独立会话）`}
+                >
+                  <span>📁 {currentSession.workspaceName}</span>
+                  <span className="text-[9px] text-accent/60 hover:text-accent font-bold">×</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (activeWorkspaceDir) {
+                      const name = activeWorkspaceDir.replace(/[\\/]$/, '').split(/[\\/]/).pop() || '工程';
+                      updateCurrentSessionWorkspace(activeWorkspaceDir, name);
+                    }
+                  }}
+                  className="px-2 py-0.5 rounded-md bg-slate-500/10 border border-border text-text-muted font-mono text-[10px] hover:text-text-primary hover:border-accent/40 transition-colors cursor-pointer"
+                  title={activeWorkspaceDir ? `点击一键归档到当前工程: ${activeWorkspaceDir}` : '当前为纯净通用独立对话，未绑定任何工程'}
+                >
+                  💬 通用独立会话 {activeWorkspaceDir ? '+ 归档' : ''}
+                </button>
+              )}
             </div>
 
             <div className="flex items-center gap-2">
@@ -508,6 +644,10 @@ export const App: React.FC = () => {
         <PreviewPanel
           isOpen={isPreviewOpen}
           onClose={() => setIsPreviewOpen(false)}
+          title={previewFile?.title}
+          filePath={previewFile?.filePath}
+          codeContent={previewFile?.codeContent}
+          onInsertToPrompt={(text) => setInputPrompt(prev => prev ? `${prev} ${text}` : text)}
         />
       </div>
 
@@ -533,6 +673,14 @@ export const App: React.FC = () => {
         isOpen={isAboutOpen}
         onClose={() => setIsAboutOpen(false)}
         onCheckUpdates={checkForUpdates}
+        onOpenFeedback={() => setIsFeedbackOpen(true)}
+      />
+
+      <FeedbackModal
+        isOpen={isFeedbackOpen}
+        onClose={() => setIsFeedbackOpen(false)}
+        selectedModel={selectedModel}
+        permissionMode={permissionMode}
       />
 
       <UpdatePromptModal

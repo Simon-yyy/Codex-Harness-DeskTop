@@ -183,6 +183,7 @@ contextBridge.exposeInMainWorld("codexDesktop", {
     return () => ipcRenderer.removeListener("llm-stream-chunk", handler);
   },
   selectWorkspaceDir: () => ipcRenderer.invoke("select-workspace-dir"),
+  setWorkspaceDir: (dirPath) => ipcRenderer.invoke("set-workspace-dir", dirPath),
   readWorkspaceTree: (dirPath) => ipcRenderer.invoke("read-workspace-tree", dirPath),
   getSecurityStatus: () => ipcRenderer.invoke("get-security-status"),
   setPermissionMode: (mode) => ipcRenderer.invoke("set-permission-mode", mode),

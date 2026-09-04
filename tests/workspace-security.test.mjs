@@ -62,7 +62,15 @@ export function runWorkspaceSecurityTests() {
 
     let candidatePath = "";
 
-    if (mode === "workspace-readonly") {
+    if (mode === "chat-only") {
+      return {
+        ok: false,
+        code: "CHAT_ONLY_BLOCKED",
+        reason: "当前处于【纯对话咨询】模式，已强制阻断本地任何文件读取操作"
+      };
+    }
+
+    if (mode === "workspace-readonly" || mode === "workspace-readwrite") {
       if (!workspace) {
         return { ok: false, code: "NO_WORKSPACE", reason: "当前尚未选定工作区工程目录" };
       }
@@ -200,6 +208,22 @@ export function runWorkspaceSecurityTests() {
     assert.ok(resLarge.content.includes("[⚠️ 系统提示: 文件总大小超出限制"));
     assert.strictEqual(resLarge.totalBytes, 150 * 1024);
     process.stdout.write("  ✅ [PASS] 向量 7: 128KB 字节精准截断与末尾系统提示标记\n");
+
+    // 测试 8: chat-only 模式零文件访问阻断
+    const chatOnlySandbox = { activeWorkspaceDir: workspaceDir, permissionMode: "chat-only" };
+    const resChatOnly = simulateReadWorkspaceFile({ relativePath: "index.ts" }, chatOnlySandbox);
+    assert.strictEqual(resChatOnly.ok, false, "chat-only 模式下必须拦截任何文件读取");
+    assert.strictEqual(resChatOnly.code, "CHAT_ONLY_BLOCKED");
+    process.stdout.write("  ✅ [PASS] 向量 8: chat-only 纯对话模式强制阻断文件读取 (CHAT_ONLY_BLOCKED)\n");
+
+    // 测试 9: workspace-readwrite 模式保持工作区边界安全防护
+    const rwSandbox = { activeWorkspaceDir: workspaceDir, permissionMode: "workspace-readwrite" };
+    const resRwNormal = simulateReadWorkspaceFile({ relativePath: "index.ts" }, rwSandbox);
+    assert.strictEqual(resRwNormal.ok, true, "读写模式下工作区内合法文件应可读");
+    const resRwTraversal = simulateReadWorkspaceFile({ relativePath: "../outside-secret/secret.key" }, rwSandbox);
+    assert.strictEqual(resRwTraversal.ok, false, "读写模式下越权访问外部文件仍必须拦截");
+    assert.strictEqual(resRwTraversal.code, "PERMISSION_DENIED");
+    process.stdout.write("  ✅ [PASS] 向量 9: workspace-readwrite 读写模式工作区严格边界守卫 (PERMISSION_DENIED)\n");
 
   } finally {
     // 清理测试临时文件

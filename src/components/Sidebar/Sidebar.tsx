@@ -15,23 +15,53 @@ import {
   FileCode,
   Image,
   RefreshCw,
-  Loader2
+  Loader2,
+  Edit2,
+  Check,
+  FolderPlus,
+  MoreHorizontal,
+  GitFork,
+  Archive,
+  Search,
+  SlidersHorizontal,
+  X,
+  Bug
 } from 'lucide-react';
-import { ChatSession } from '@/types/session';
+import { ChatSession, WorkspaceFolder } from '@/types/session';
 import { SkillItem, WorkspaceFileItem } from '@/types/electron';
 import { SKILL_CATEGORIES, SkillCategory, getSkillDisplayInfo, SKILLS_DICTIONARY } from '@/data/skillsDictionary';
 import { SkillDetailModal } from '@/components/Modals/SkillDetailModal';
+
+function formatRelativeTime(timestamp: number): string {
+  if (!timestamp) return '';
+  const diff = Math.floor((Date.now() - timestamp) / 1000);
+  if (diff < 60) return '刚刚';
+  const mins = Math.floor(diff / 60);
+  if (mins < 60) return `${mins}分钟`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}小时`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}天`;
+  return `${Math.floor(days / 30)}月前`;
+}
 
 interface SidebarProps {
   sessions: ChatSession[];
   currentSessionId: string;
   onSelectSession: (id: string) => void;
   onNewSession: () => void;
+  onNewSessionInWorkspace?: (workspaceDir?: string, workspaceName?: string) => void;
+  onForkSession?: (sessionId: string) => void;
+  onArchiveSession?: (sessionId: string) => void;
   onDeleteSession: (id: string) => void;
+  onRenameSession?: (id: string, newTitle: string) => void;
   onInsertPrompt: (text: string) => void;
+  onSelectFile?: (file: WorkspaceFileItem) => void;
   onOpenSettings: () => void;
   onOpenTheme: () => void;
   onOpenAbout: () => void;
+  onOpenFeedback?: () => void;
+  activeWorkspaceDir?: string | null;
   onWorkspaceChange?: (path: string) => void;
 }
 
@@ -40,11 +70,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
   currentSessionId,
   onSelectSession,
   onNewSession,
+  onNewSessionInWorkspace,
+  onForkSession,
+  onArchiveSession,
   onDeleteSession,
+  onRenameSession,
   onInsertPrompt,
+  onSelectFile,
   onOpenSettings,
   onOpenTheme,
   onOpenAbout,
+  onOpenFeedback,
+  activeWorkspaceDir,
   onWorkspaceChange,
 }) => {
   const [activeTab, setActiveTab] = useState<'sessions' | 'files' | 'skills'>('sessions');
@@ -53,14 +90,87 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [selectedCategory, setSelectedCategory] = useState<SkillCategory>('all');
   const [selectedSkillForModal, setSelectedSkillForModal] = useState<SkillItem | null>(null);
 
+  // 会话重命名与操作菜单浮层状态
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState('');
+  const [activeMenuSessionId, setActiveMenuSessionId] = useState<string | null>(null);
+
+  // 搜索与过滤状态
+  const [isSearchingSession, setIsSearchingSession] = useState(false);
+  const [sessionSearchQuery, setSessionSearchQuery] = useState('');
+  const [showOnlyArchived, setShowOnlyArchived] = useState(false);
+
+  // DSH 风格多工作区常驻列表 (保存在 localStorage)
+  const [workspaceFolders, setWorkspaceFolders] = useState<WorkspaceFolder[]>(() => {
+    try {
+      const saved = localStorage.getItem('codex_workspace_folders_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+    if (activeWorkspaceDir) {
+      const name = activeWorkspaceDir.replace(/[\\/]$/, '').split(/[\\/]/).pop() || '当前工程';
+      return [{ id: activeWorkspaceDir, path: activeWorkspaceDir, name }];
+    }
+    return [];
+  });
+
+  // 工作区文件夹折叠状态 (默认展开)
+  const [collapsedWorkspaces, setCollapsedWorkspaces] = useState<Record<string, boolean>>({});
+
   // 工作区状态
   const [workspacePath, setWorkspacePath] = useState<string>(() => {
-    return localStorage.getItem('codex_workspace_dir') || '';
+    return activeWorkspaceDir || localStorage.getItem('codex_workspace_dir') || '';
   });
   const [workspaceName, setWorkspaceName] = useState<string>('');
   const [workspaceTree, setWorkspaceTree] = useState<WorkspaceFileItem[]>([]);
   const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
+
+  // 监听全局点击关闭 ... 菜单
+  useEffect(() => {
+    const handleGlobalClick = () => {
+      setActiveMenuSessionId(null);
+    };
+    window.addEventListener('click', handleGlobalClick);
+    return () => window.removeEventListener('click', handleGlobalClick);
+  }, []);
+
+  // 确保当前 activeWorkspaceDir 在工作区列表中
+  useEffect(() => {
+    if (activeWorkspaceDir) {
+      setWorkspaceFolders(prev => {
+        if (prev.some(f => f.path === activeWorkspaceDir)) return prev;
+        const name = activeWorkspaceDir.replace(/[\\/]$/, '').split(/[\\/]/).pop() || '工程';
+        const updated = [...prev, { id: activeWorkspaceDir, path: activeWorkspaceDir, name }];
+        localStorage.setItem('codex_workspace_folders_v1', JSON.stringify(updated));
+        return updated;
+      });
+    }
+  }, [activeWorkspaceDir]);
+
+  // 添加新工作区目录
+  const handleAddWorkspaceFolder = async () => {
+    if (window.codexDesktop?.selectWorkspaceDir) {
+      const selected = await window.codexDesktop.selectWorkspaceDir();
+      if (selected) {
+        const name = selected.replace(/[\\/]$/, '').split(/[\\/]/).pop() || '工程';
+        setWorkspaceFolders(prev => {
+          if (prev.some(f => f.path === selected)) return prev;
+          const updated = [...prev, { id: selected, path: selected, name }];
+          localStorage.setItem('codex_workspace_folders_v1', JSON.stringify(updated));
+          return updated;
+        });
+        setWorkspacePath(selected);
+        if (onWorkspaceChange) onWorkspaceChange(selected);
+      }
+    }
+  };
+
+  const toggleWorkspaceCollapse = (key: string) => {
+    setCollapsedWorkspaces(prev => ({ ...prev, [key]: !prev[key] }));
+  };
 
   useEffect(() => {
     if (window.codexDesktop && window.codexDesktop.getSkills) {
@@ -95,6 +205,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       if (onWorkspaceChange) onWorkspaceChange(workspacePath);
     }
   }, [workspacePath]);
+
+  // 当外部 activeWorkspaceDir 变动（如会话切换）时同步内部状态
+  useEffect(() => {
+    if (activeWorkspaceDir !== undefined && activeWorkspaceDir !== null && activeWorkspaceDir !== workspacePath) {
+      setWorkspacePath(activeWorkspaceDir);
+      localStorage.setItem('codex_workspace_dir', activeWorkspaceDir);
+    }
+  }, [activeWorkspaceDir]);
 
   // 选择本地任意文件夹作为工作区
   const handleSelectWorkspace = async () => {
@@ -180,10 +298,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
         return (
           <div
             key={item.fullPath}
-            onClick={() => onInsertPrompt(`@${item.path}`)}
+            onClick={() => {
+              if (onSelectFile) onSelectFile(item);
+              onInsertPrompt(`@${item.path}`);
+            }}
             style={{ paddingLeft: `${depth * 10 + 20}px` }}
             className="flex items-center gap-1.5 py-1 pr-2 rounded-md hover:bg-bg-hover cursor-pointer text-text-muted hover:text-text-primary text-xs transition-colors group"
-            title={`点击在输入框引用 @${item.path}\n${item.fullPath}`}
+            title={`点击在输入框引用 @${item.path} 并在右侧预览源码\n${item.fullPath}`}
           >
             {getFileIcon(item.name)}
             <span className="truncate group-hover:text-text-primary">{item.name}</span>
@@ -258,38 +379,409 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* 滚动内容区 */}
       <div className="flex-1 overflow-y-auto px-3 py-1 space-y-1">
-        {/* Tab 1: 会话列表 */}
+        {/* Tab 1: DSH 风格多工作区树与会话归档管理 */}
         {activeTab === 'sessions' && (
-          <div className="space-y-1">
-            {sessions.map((s) => {
-              const isActive = s.id === currentSessionId;
-              return (
-                <div
-                  key={s.id}
-                  onClick={() => onSelectSession(s.id)}
-                  className={`group relative flex items-center justify-between p-2 rounded-lg cursor-pointer transition-all ${
-                    isActive
-                      ? 'bg-accent/15 border border-accent/30 text-accent font-medium'
-                      : 'hover:bg-bg-hover text-text-secondary hover:text-text-primary'
+          <div className="space-y-2">
+            {/* 工作区标题工具条 (1:1 复刻 DSH 截图 1) */}
+            <div className="flex items-center justify-between px-1 pt-1 text-xs font-semibold text-text-primary select-none">
+              <span className="tracking-wide">工作区</span>
+              <div className="flex items-center gap-0.5 text-text-muted">
+                <button
+                  type="button"
+                  onClick={() => setIsSearchingSession(!isSearchingSession)}
+                  className={`p-1 rounded hover:text-text-primary hover:bg-bg-hover transition-colors ${
+                    isSearchingSession || sessionSearchQuery ? 'text-accent bg-accent/10' : ''
                   }`}
+                  title="搜索工作区或会话"
                 >
-                  <div className="flex items-center gap-2 min-w-0 flex-1">
-                    <MessageSquare size={14} className={isActive ? 'text-accent' : 'text-text-muted'} />
-                    <span className="text-xs truncate">{s.title || '新会话'}</span>
-                  </div>
+                  <Search size={13} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowOnlyArchived(!showOnlyArchived)}
+                  className={`p-1 rounded hover:text-text-primary hover:bg-bg-hover transition-colors ${
+                    showOnlyArchived ? 'text-amber-400 bg-amber-400/10' : ''
+                  }`}
+                  title={showOnlyArchived ? '显示全部会话' : '仅查看已归档会话'}
+                >
+                  <SlidersHorizontal size={13} />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAddWorkspaceFolder}
+                  className="p-1 rounded hover:text-accent hover:bg-bg-hover transition-colors text-accent"
+                  title="添加本地文件夹至工作区"
+                >
+                  <FolderPlus size={14} />
+                </button>
+              </div>
+            </div>
+
+            {/* 实时搜索栏 */}
+            {isSearchingSession && (
+              <div className="relative">
+                <input
+                  type="text"
+                  value={sessionSearchQuery}
+                  onChange={(e) => setSessionSearchQuery(e.target.value)}
+                  placeholder="过滤工作区或会话..."
+                  autoFocus
+                  className="w-full text-xs px-2 py-1 pr-6 bg-bg-card border border-border rounded-md text-text-primary outline-none focus:border-accent"
+                />
+                {sessionSearchQuery && (
                   <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDeleteSession(s.id);
-                    }}
-                    className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-500/20 hover:text-red-400 rounded text-text-muted transition-all"
-                    title="删除会话"
+                    type="button"
+                    onClick={() => setSessionSearchQuery('')}
+                    className="absolute right-1.5 top-1.5 text-text-muted hover:text-text-primary"
                   >
-                    <Trash2 size={12} />
+                    <X size={12} />
                   </button>
-                </div>
-              );
-            })}
+                )}
+              </div>
+            )}
+
+            {/* 工作区列表渲染 */}
+            <div className="space-y-1.5">
+              {/* 1. 各个已挂载工作区文件夹 */}
+              {workspaceFolders.map((wf) => {
+                const isCollapsed = !!collapsedWorkspaces[wf.path];
+                const matchedSessions = sessions.filter((s) => {
+                  const matchWs = s.workspaceDir === wf.path;
+                  const matchArchived = showOnlyArchived ? s.isArchived : !s.isArchived;
+                  const matchQuery = !sessionSearchQuery.trim() ||
+                    (s.title && s.title.toLowerCase().includes(sessionSearchQuery.toLowerCase())) ||
+                    wf.name.toLowerCase().includes(sessionSearchQuery.toLowerCase());
+                  return matchWs && matchArchived && matchQuery;
+                });
+
+                // 即使没有会话，文件夹也展示供添加
+                if (sessionSearchQuery && matchedSessions.length === 0 && !wf.name.toLowerCase().includes(sessionSearchQuery.toLowerCase())) {
+                  return null;
+                }
+
+                return (
+                  <div key={wf.path} className="space-y-0.5">
+                    {/* 工作区目录头部 (可折叠、可添加新会话) */}
+                    <div
+                      onClick={() => toggleWorkspaceCollapse(wf.path)}
+                      className="group flex items-center justify-between py-1 px-1.5 rounded-md hover:bg-bg-hover cursor-pointer text-text-secondary hover:text-text-primary text-xs transition-colors"
+                      title={wf.path}
+                    >
+                      <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                        {isCollapsed ? (
+                          <ChevronRight size={12} className="text-text-muted shrink-0" />
+                        ) : (
+                          <ChevronDown size={12} className="text-text-muted shrink-0" />
+                        )}
+                        <Folder size={13} className="text-amber-400 shrink-0" />
+                        <span className="truncate font-medium text-[12px]">{wf.name}</span>
+                      </div>
+
+                      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (onNewSessionInWorkspace) {
+                              onNewSessionInWorkspace(wf.path, wf.name);
+                            } else {
+                              onNewSession();
+                            }
+                          }}
+                          className="p-1 hover:bg-bg-card hover:text-accent rounded text-text-muted transition-colors"
+                          title={`在【${wf.name}】下新建会话`}
+                        >
+                          <Plus size={12} />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* 下属会话列表 (展开时呈现) */}
+                    {!isCollapsed && (
+                      <div className="pl-3.5 space-y-0.5 border-l border-border/40 ml-2">
+                        {matchedSessions.map((s) => {
+                          const isActive = s.id === currentSessionId;
+                          const isEditing = editingSessionId === s.id;
+                          const isMenuOpen = activeMenuSessionId === s.id;
+                          const relTime = formatRelativeTime(s.updatedAt);
+
+                          return (
+                            <div
+                              key={s.id}
+                              onClick={() => !isEditing && onSelectSession(s.id)}
+                              className={`group relative flex items-center justify-between py-1 px-2 rounded-md cursor-pointer text-xs transition-all ${
+                                isActive
+                                  ? 'bg-accent/15 text-accent font-medium'
+                                  : 'text-text-secondary hover:text-text-primary hover:bg-bg-hover'
+                              }`}
+                              title={s.title || '新会话'}
+                            >
+                              {/* 会话标题与行内重命名 */}
+                              <div className="flex items-center gap-1.5 min-w-0 flex-1 pr-1">
+                                {isEditing ? (
+                                  <div className="flex items-center gap-1 flex-1" onClick={(e) => e.stopPropagation()}>
+                                    <input
+                                      type="text"
+                                      value={editingTitle}
+                                      onChange={(e) => setEditingTitle(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                          if (onRenameSession && editingTitle.trim()) {
+                                            onRenameSession(s.id, editingTitle.trim());
+                                          }
+                                          setEditingSessionId(null);
+                                        } else if (e.key === 'Escape') {
+                                          setEditingSessionId(null);
+                                        }
+                                      }}
+                                      autoFocus
+                                      className="w-full text-xs px-1.5 py-0.5 bg-bg-card border border-accent rounded text-text-primary outline-none"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (onRenameSession && editingTitle.trim()) {
+                                          onRenameSession(s.id, editingTitle.trim());
+                                        }
+                                        setEditingSessionId(null);
+                                      }}
+                                      className="p-0.5 text-accent"
+                                    >
+                                      <Check size={11} />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <span className="truncate text-xs">{s.title || '新会话'}</span>
+                                )}
+                              </div>
+
+                              {/* 右侧：相对时间 / 悬停出现 ... 更多菜单 */}
+                              {!isEditing && (
+                                <div className="flex items-center gap-1 shrink-0 relative" onClick={(e) => e.stopPropagation()}>
+                                  <span className="text-[10px] text-text-muted font-mono group-hover:hidden">
+                                    {relTime}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setActiveMenuSessionId(isMenuOpen ? null : s.id)}
+                                    className={`hidden group-hover:flex p-1 hover:bg-bg-card hover:text-text-primary rounded text-text-muted transition-colors ${
+                                      isMenuOpen ? '!flex text-text-primary bg-bg-card shadow-xs' : ''
+                                    }`}
+                                    title="会话选项"
+                                  >
+                                    <MoreHorizontal size={12} />
+                                  </button>
+
+                                  {/* DSH 1:1 菜单气泡浮层 (截图 2) */}
+                                  {isMenuOpen && (
+                                    <div className="absolute right-0 top-full mt-1 w-32 bg-bg-card border border-border rounded-lg shadow-2xl z-50 py-1 text-xs select-none animate-fadeIn">
+                                      <div
+                                        onClick={() => {
+                                          setEditingSessionId(s.id);
+                                          setEditingTitle(s.title || '');
+                                          setActiveMenuSessionId(null);
+                                        }}
+                                        className="flex items-center gap-2 px-3 py-1.5 hover:bg-bg-hover text-text-secondary hover:text-text-primary cursor-pointer transition-colors"
+                                      >
+                                        <Edit2 size={12} className="text-text-muted" />
+                                        <span>重命名</span>
+                                      </div>
+                                      <div
+                                        onClick={() => {
+                                          if (onForkSession) onForkSession(s.id);
+                                          setActiveMenuSessionId(null);
+                                        }}
+                                        className="flex items-center gap-2 px-3 py-1.5 hover:bg-bg-hover text-text-secondary hover:text-text-primary cursor-pointer transition-colors"
+                                      >
+                                        <GitFork size={12} className="text-text-muted" />
+                                        <span>分叉会话</span>
+                                      </div>
+                                      <div
+                                        onClick={() => {
+                                          if (onArchiveSession) onArchiveSession(s.id);
+                                          setActiveMenuSessionId(null);
+                                        }}
+                                        className="flex items-center gap-2 px-3 py-1.5 hover:bg-bg-hover text-text-secondary hover:text-text-primary cursor-pointer transition-colors"
+                                      >
+                                        <Archive size={12} className="text-text-muted" />
+                                        <span>{s.isArchived ? '取消归档' : '归档会话'}</span>
+                                      </div>
+                                      <div className="border-t border-border my-1"></div>
+                                      <div
+                                        onClick={() => {
+                                          onDeleteSession(s.id);
+                                          setActiveMenuSessionId(null);
+                                        }}
+                                        className="flex items-center gap-2 px-3 py-1.5 hover:bg-red-500/15 text-red-400 cursor-pointer transition-colors"
+                                      >
+                                        <Trash2 size={12} />
+                                        <span>删除会话</span>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* 2. 独立/通用会话分组 (未绑定特定工作区) */}
+              {(() => {
+                const unattached = sessions.filter((s) => {
+                  const matchUnattached = !s.workspaceDir || !workspaceFolders.some((f) => f.path === s.workspaceDir);
+                  const matchArchived = showOnlyArchived ? s.isArchived : !s.isArchived;
+                  const matchQuery = !sessionSearchQuery.trim() || (s.title && s.title.toLowerCase().includes(sessionSearchQuery.toLowerCase()));
+                  return matchUnattached && matchArchived && matchQuery;
+                });
+                if (unattached.length === 0) return null;
+                const isCollapsed = !!collapsedWorkspaces['__unattached__'];
+
+                return (
+                  <div className="space-y-0.5 pt-1">
+                    <div
+                      onClick={() => toggleWorkspaceCollapse('__unattached__')}
+                      className="group flex items-center justify-between py-1 px-1.5 rounded-md hover:bg-bg-hover cursor-pointer text-text-secondary hover:text-text-primary text-xs transition-colors"
+                    >
+                      <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                        {isCollapsed ? (
+                          <ChevronRight size={12} className="text-text-muted shrink-0" />
+                        ) : (
+                          <ChevronDown size={12} className="text-text-muted shrink-0" />
+                        )}
+                        <MessageSquare size={13} className="text-slate-400 shrink-0" />
+                        <span className="truncate font-medium text-[12px]">通用独立对话</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onNewSession();
+                        }}
+                        className="p-1 hover:bg-bg-card hover:text-accent rounded text-text-muted transition-colors opacity-0 group-hover:opacity-100"
+                        title="新建独立对话"
+                      >
+                        <Plus size={12} />
+                      </button>
+                    </div>
+
+                    {!isCollapsed && (
+                      <div className="pl-3.5 space-y-0.5 border-l border-border/40 ml-2">
+                        {unattached.map((s) => {
+                          const isActive = s.id === currentSessionId;
+                          const isEditing = editingSessionId === s.id;
+                          const isMenuOpen = activeMenuSessionId === s.id;
+                          const relTime = formatRelativeTime(s.updatedAt);
+
+                          return (
+                            <div
+                              key={s.id}
+                              onClick={() => !isEditing && onSelectSession(s.id)}
+                              className={`group relative flex items-center justify-between py-1 px-2 rounded-md cursor-pointer text-xs transition-all ${
+                                isActive
+                                  ? 'bg-accent/15 text-accent font-medium'
+                                  : 'text-text-secondary hover:text-text-primary hover:bg-bg-hover'
+                              }`}
+                            >
+                              <div className="flex items-center gap-1.5 min-w-0 flex-1 pr-1">
+                                {isEditing ? (
+                                  <div className="flex items-center gap-1 flex-1" onClick={(e) => e.stopPropagation()}>
+                                    <input
+                                      type="text"
+                                      value={editingTitle}
+                                      onChange={(e) => setEditingTitle(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                          if (onRenameSession && editingTitle.trim()) {
+                                            onRenameSession(s.id, editingTitle.trim());
+                                          }
+                                          setEditingSessionId(null);
+                                        } else if (e.key === 'Escape') {
+                                          setEditingSessionId(null);
+                                        }
+                                      }}
+                                      autoFocus
+                                      className="w-full text-xs px-1.5 py-0.5 bg-bg-card border border-accent rounded text-text-primary outline-none"
+                                    />
+                                  </div>
+                                ) : (
+                                  <span className="truncate text-xs">{s.title || '新会话'}</span>
+                                )}
+                              </div>
+
+                              {!isEditing && (
+                                <div className="flex items-center gap-1 shrink-0 relative" onClick={(e) => e.stopPropagation()}>
+                                  <span className="text-[10px] text-text-muted font-mono group-hover:hidden">{relTime}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setActiveMenuSessionId(isMenuOpen ? null : s.id)}
+                                    className={`hidden group-hover:flex p-1 hover:bg-bg-card hover:text-text-primary rounded text-text-muted transition-colors ${
+                                      isMenuOpen ? '!flex text-text-primary bg-bg-card shadow-xs' : ''
+                                    }`}
+                                  >
+                                    <MoreHorizontal size={12} />
+                                  </button>
+
+                                  {isMenuOpen && (
+                                    <div className="absolute right-0 top-full mt-1 w-32 bg-bg-card border border-border rounded-lg shadow-2xl z-50 py-1 text-xs select-none animate-fadeIn">
+                                      <div
+                                        onClick={() => {
+                                          setEditingSessionId(s.id);
+                                          setEditingTitle(s.title || '');
+                                          setActiveMenuSessionId(null);
+                                        }}
+                                        className="flex items-center gap-2 px-3 py-1.5 hover:bg-bg-hover text-text-secondary hover:text-text-primary cursor-pointer"
+                                      >
+                                        <Edit2 size={12} className="text-text-muted" />
+                                        <span>重命名</span>
+                                      </div>
+                                      <div
+                                        onClick={() => {
+                                          if (onForkSession) onForkSession(s.id);
+                                          setActiveMenuSessionId(null);
+                                        }}
+                                        className="flex items-center gap-2 px-3 py-1.5 hover:bg-bg-hover text-text-secondary hover:text-text-primary cursor-pointer"
+                                      >
+                                        <GitFork size={12} className="text-text-muted" />
+                                        <span>分叉会话</span>
+                                      </div>
+                                      <div
+                                        onClick={() => {
+                                          if (onArchiveSession) onArchiveSession(s.id);
+                                          setActiveMenuSessionId(null);
+                                        }}
+                                        className="flex items-center gap-2 px-3 py-1.5 hover:bg-bg-hover text-text-secondary hover:text-text-primary cursor-pointer"
+                                      >
+                                        <Archive size={12} className="text-text-muted" />
+                                        <span>{s.isArchived ? '取消归档' : '归档会话'}</span>
+                                      </div>
+                                      <div className="border-t border-border my-1"></div>
+                                      <div
+                                        onClick={() => {
+                                          onDeleteSession(s.id);
+                                          setActiveMenuSessionId(null);
+                                        }}
+                                        className="flex items-center gap-2 px-3 py-1.5 hover:bg-red-500/15 text-red-400 cursor-pointer"
+                                      >
+                                        <Trash2 size={12} />
+                                        <span>删除会话</span>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
           </div>
         )}
 
@@ -479,16 +971,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <span>模型配置</span>
         </button>
         <div className="flex items-center gap-1">
+          {onOpenFeedback && (
+            <button
+              type="button"
+              onClick={onOpenFeedback}
+              className="p-1.5 text-text-secondary hover:text-red-400 hover:bg-bg-hover rounded-lg transition-colors cursor-pointer"
+              title="问题反馈与 Bug 报告"
+            >
+              <Bug size={14} />
+            </button>
+          )}
           <button
+            type="button"
             onClick={onOpenTheme}
-            className="p-1.5 text-text-secondary hover:text-text-primary hover:bg-bg-hover rounded-lg transition-colors"
+            className="p-1.5 text-text-secondary hover:text-text-primary hover:bg-bg-hover rounded-lg transition-colors cursor-pointer"
             title="主题切换"
           >
             <Palette size={14} />
           </button>
           <button
+            type="button"
             onClick={onOpenAbout}
-            className="p-1.5 text-text-secondary hover:text-text-primary hover:bg-bg-hover rounded-lg transition-colors"
+            className="p-1.5 text-text-secondary hover:text-text-primary hover:bg-bg-hover rounded-lg transition-colors cursor-pointer"
             title="关于与版本"
           >
             <Info size={14} />

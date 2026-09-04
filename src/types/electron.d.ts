@@ -72,7 +72,7 @@ export interface WorkspaceFileItem {
   children?: WorkspaceFileItem[];
 }
 
-export type PermissionMode = 'workspace-readonly' | 'full-access';
+export type PermissionMode = 'chat-only' | 'workspace-readonly' | 'workspace-readwrite' | 'full-access';
 
 export interface SecurityStatus {
   activeWorkspaceDir: string | null;
@@ -108,6 +108,7 @@ export interface CodexDesktopAPI {
   callLlmApi?: (payload: { endpoint: string; apiKey?: string; body: any; customHeaders?: Record<string, string>; timeout?: number; stream?: boolean; streamId?: string }) => Promise<{ ok: boolean; status: number; statusText: string; body: string }>;
   onLlmStreamChunk?: (callback: (data: { streamId?: string; contentDelta?: string; thinkingDelta?: string; isDone?: boolean }) => void) => () => void;
   selectWorkspaceDir?: () => Promise<string | null>;
+  setWorkspaceDir?: (dirPath: string) => Promise<{ ok: boolean; activeWorkspaceDir?: string | null; error?: string }>;
   readWorkspaceTree?: (dirPath?: string) => Promise<WorkspaceTreeResult | null>;
   getSecurityStatus?: () => Promise<SecurityStatus>;
   setPermissionMode?: (mode: PermissionMode) => Promise<{ ok: boolean; canceled?: boolean; error?: string; permissionMode: PermissionMode }>;

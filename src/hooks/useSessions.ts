@@ -42,11 +42,13 @@ export function useSessions() {
 
   const currentSession = sessions.find(s => s.id === currentSessionId) || sessions[0] || DEFAULT_SESSION;
 
-  const createNewSession = (initialModel = 'gpt-5.6-sol') => {
+  const createNewSession = (initialModel = 'gpt-5.6-sol', workspaceDir?: string, workspaceName?: string) => {
     const newSession: ChatSession = {
       id: 'session_' + Date.now(),
       title: '新会话',
       updatedAt: Date.now(),
+      workspaceDir: workspaceDir || undefined,
+      workspaceName: workspaceName || undefined,
       messages: [
         {
           role: 'assistant',
@@ -60,6 +62,61 @@ export function useSessions() {
     setSessions(prev => [newSession, ...prev]);
     setCurrentSessionId(newSession.id);
     return newSession;
+  };
+
+  const renameSession = (sessionId: string, newTitle: string) => {
+    const trimmed = newTitle.trim();
+    if (!trimmed) return;
+    setSessions(prev => prev.map(s => {
+      if (s.id === sessionId) {
+        return { ...s, title: trimmed, updatedAt: Date.now() };
+      }
+      return s;
+    }));
+  };
+
+  const updateCurrentSessionWorkspace = (workspaceDir: string, workspaceName: string) => {
+    setSessions(prev => prev.map(s => {
+      if (s.id === currentSessionId) {
+        return {
+          ...s,
+          workspaceDir,
+          workspaceName,
+          updatedAt: Date.now()
+        };
+      }
+      return s;
+    }));
+  };
+
+  const forkSession = (sessionId: string) => {
+    const target = sessions.find(s => s.id === sessionId);
+    if (!target) return;
+    const forked: ChatSession = {
+      id: 'session_' + Date.now(),
+      title: `${target.title || '会话'} (分支)`,
+      updatedAt: Date.now(),
+      workspaceDir: target.workspaceDir,
+      workspaceName: target.workspaceName,
+      forkedFrom: sessionId,
+      messages: JSON.parse(JSON.stringify(target.messages))
+    };
+    setSessions(prev => [forked, ...prev]);
+    setCurrentSessionId(forked.id);
+    return forked;
+  };
+
+  const toggleArchiveSession = (sessionId: string) => {
+    setSessions(prev => prev.map(s => {
+      if (s.id === sessionId) {
+        return {
+          ...s,
+          isArchived: !s.isArchived,
+          updatedAt: Date.now()
+        };
+      }
+      return s;
+    }));
   };
 
   const deleteSession = (sessionId: string) => {
@@ -155,6 +212,10 @@ export function useSessions() {
     setCurrentSessionId,
     currentSession,
     createNewSession,
+    renameSession,
+    updateCurrentSessionWorkspace,
+    forkSession,
+    toggleArchiveSession,
     deleteSession,
     addMessageToCurrentSession,
     updateLastMessageInCurrentSession,

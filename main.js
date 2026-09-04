@@ -166,6 +166,13 @@ function createApplicationMenu() {
           click: () => checkForUpdates(false)
         },
         {
+          label: "提交 Bug 报告与反馈...",
+          accelerator: "CmdOrCtrl+Shift+F",
+          click: () => {
+            if (mainWindow) mainWindow.webContents.send("menu-action", "open-feedback");
+          }
+        },
+        {
           label: "关于 Codex Desktop",
           click: () => {
             if (mainWindow) mainWindow.webContents.send("menu-action", "open-about");
@@ -639,9 +646,10 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
     let baseHeaders = {};
     if (isAnthropicEndpoint) {
       // 纯净 Anthropic 官方客户端请求头 (模拟 Claude Code)
+      // 流式模式下不设置 Content-Length，防止与分块传输协议冲突触发 unexpected EOF
       baseHeaders = {
         "Content-Type": "application/json",
-        "Content-Length": Buffer.byteLength(postData),
+        ...(stream ? {} : { "Content-Length": Buffer.byteLength(postData) }),
         "x-api-key": cleanKey,
         "anthropic-version": "2023-06-01",
         "User-Agent": "cline/3.0.0",
@@ -651,9 +659,10 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
       };
     } else {
       // 纯净 OpenAI / Codex 官方 CLI 请求头 (严禁携带 Anthropic 混杂头，防 WAF 拦截)
+      // 流式模式下不设置 Content-Length，防止与分块传输协议冲突触发 unexpected EOF
       baseHeaders = {
         "Content-Type": "application/json",
-        "Content-Length": Buffer.byteLength(postData),
+        ...(stream ? {} : { "Content-Length": Buffer.byteLength(postData) }),
         "Authorization": cleanKey ? `Bearer ${cleanKey}` : "",
         "User-Agent": "cline/3.0.0",
         "Accept": stream ? "text/event-stream, application/json" : "application/json",
@@ -749,15 +758,32 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
                   const deltaText = choice?.delta?.content || "";
                   const deltaThinking = choice?.delta?.reasoning_content || choice?.delta?.reasoning || "";
 
+                  // 捕获 OpenAI 格式的工具调用 (Tool Calls)，防止模型发起工具调用时流式被静默中断
+                  let toolCallsDelta = "";
+                  const toolCalls = choice?.delta?.tool_calls;
+                  if (Array.isArray(toolCalls) && toolCalls.length > 0) {
+                    for (const tc of toolCalls) {
+                      if (tc.function?.name) {
+                        toolCallsDelta += `\n\n> 🔧 **[模型尝试发起工具调用]**: \`${tc.function.name}\`\n\`\`\`json\n`;
+                      }
+                      if (tc.function?.arguments) {
+                        toolCallsDelta += tc.function.arguments;
+                      }
+                    }
+                  }
+
                   // 2. Anthropic 原生流式 Delta
                   let anthropicText = "";
                   let anthropicThinking = "";
                   if (parsed.type === "content_block_delta") {
                     if (parsed.delta?.type === "text_delta") anthropicText = parsed.delta.text || "";
                     if (parsed.delta?.type === "thinking_delta") anthropicThinking = parsed.delta.thinking || "";
+                    if (parsed.delta?.type === "input_json_delta") toolCallsDelta += parsed.delta.partial_json || "";
+                  } else if (parsed.type === "content_block_start" && parsed.content_block?.type === "tool_use") {
+                    toolCallsDelta += `\n\n> 🔧 **[模型尝试发起工具调用]**: \`${parsed.content_block.name}\`\n\`\`\`json\n`;
                   }
 
-                  const contentDelta = deltaText || anthropicText;
+                  const contentDelta = deltaText || anthropicText || toolCallsDelta;
                   const thinkingDelta = deltaThinking || anthropicThinking;
 
                   if (contentDelta) accumulatedText += contentDelta;
@@ -775,6 +801,41 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
                   // 部分未完整的 JSON 片段忽略，等待下个 chunk 拼接
                 }
               }
+            }
+          });
+
+          // 捕获响应流中途 EOF / 连接被对端关闭等错误，防止未处理的流式中断
+          res.on("error", (resErr) => {
+            clearActiveTimer();
+            const isEofError = resErr.message && (
+              resErr.message.includes('unexpected EOF') ||
+              resErr.message.includes('read ECONNRESET') ||
+              resErr.message.includes('aborted') ||
+              resErr.message.includes('stream reading error')
+            );
+            if (stream && accumulatedText) {
+              // 已有部分内容输出：通知前端完成并保留已有内容（截断不丢弃）
+              if (!event.sender.isDestroyed()) {
+                event.sender.send("llm-stream-chunk", { streamId, isDone: true });
+              }
+              resolve({
+                ok: true,
+                status: 200,
+                statusText: "Partial OK",
+                body: JSON.stringify({
+                  choices: [{ message: { content: accumulatedText + "\n\n> ⚠️ *[传输中途中断，已截断显示]*", reasoning_content: accumulatedThinking } }]
+                }),
+                canRetry: false
+              });
+            } else {
+              // 无任何内容：判断是否可弹性重试
+              resolve({
+                ok: false,
+                status: 0,
+                statusText: "Stream EOF",
+                body: JSON.stringify({ error: { message: resErr.message, code: resErr.code || 'STREAM_EOF' } }),
+                canRetry: isEofError && !hasReceivedFirstByte
+              });
             }
           });
 
@@ -885,7 +946,8 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
           if (data.activeWorkspaceDir && fs.existsSync(data.activeWorkspaceDir)) {
             this.activeWorkspaceDir = fs.realpathSync(data.activeWorkspaceDir);
           }
-          if (data.permissionMode === "workspace-readonly" || data.permissionMode === "full-access") {
+          const validModes = ["chat-only", "workspace-readonly", "workspace-readwrite", "full-access"];
+          if (validModes.includes(data.permissionMode)) {
             this.permissionMode = data.permissionMode;
           }
         }
@@ -946,6 +1008,27 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
     }
   });
 
+  ipcMain.handle("set-workspace-dir", async (_event, dirPath) => {
+    if (!dirPath || typeof dirPath !== "string") {
+      SecuritySandbox.activeWorkspaceDir = null;
+      SecuritySandbox.save();
+      return { ok: true, activeWorkspaceDir: null };
+    }
+    try {
+      if (!fs.existsSync(dirPath)) {
+        return { ok: false, error: "指定的工作区目录不存在" };
+      }
+      const realDir = fs.realpathSync(dirPath);
+      SecuritySandbox.activeWorkspaceDir = realDir;
+      SecuritySandbox.save();
+      return { ok: true, activeWorkspaceDir: realDir };
+    } catch (err) {
+      SecuritySandbox.activeWorkspaceDir = dirPath;
+      SecuritySandbox.save();
+      return { ok: true, activeWorkspaceDir: dirPath };
+    }
+  });
+
   ipcMain.handle("get-security-status", async () => {
     return {
       activeWorkspaceDir: SecuritySandbox.activeWorkspaceDir,
@@ -954,7 +1037,8 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
   });
 
   ipcMain.handle("set-permission-mode", async (_event, targetMode) => {
-    if (targetMode !== "workspace-readonly" && targetMode !== "full-access") {
+    const validModes = ["chat-only", "workspace-readonly", "workspace-readwrite", "full-access"];
+    if (!validModes.includes(targetMode)) {
       return {
         ok: false,
         error: "无效的权限模式",
@@ -962,7 +1046,7 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
       };
     }
 
-    // 从工作区只读提升至全局受信任模式时，强制触发原生系统级警告确认弹窗 (防前端脚本与 XSS 自动提权)
+    // 提升至全局受信任模式时，强制触发原生系统级警告确认弹窗 (防前端脚本与 XSS 自动提权)
     if (targetMode === "full-access" && SecuritySandbox.permissionMode !== "full-access") {
       const win = mainWindow || BrowserWindow.getFocusedWindow();
       const choice = await dialog.showMessageBox(win, {
@@ -1011,9 +1095,21 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
     const mode = SecuritySandbox.permissionMode;
     const workspace = SecuritySandbox.activeWorkspaceDir;
 
+    // 1. 纯对话模式：强制拦截任何文件读取
+    if (mode === "chat-only") {
+      SecuritySandbox.logAudit("BLOCKED_READ_CHAT_ONLY", relativePath);
+      return {
+        ok: false,
+        code: "CHAT_ONLY_BLOCKED",
+        reason: "当前处于【纯对话咨询】模式，已强制阻断本地任何文件读取操作以保护隐私",
+        hint: "如需分析项目代码，请在输入框左侧将权限模式切换为【工作区只读】或【工作区读写】"
+      };
+    }
+
     let candidatePath = "";
 
-    if (mode === "workspace-readonly") {
+    // 2. 工作区沙箱模式 (工作区只读 / 工作区读写 均受严格边界限制)
+    if (mode === "workspace-readonly" || mode === "workspace-readwrite") {
       if (!workspace) {
         return {
           ok: false,
@@ -1168,6 +1264,7 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
       const IGNORED = new Set([
         "node_modules", ".git", ".svn", ".hg", "dist", "build", ".cache",
         ".vscode", ".idea", ".agent", "release", "coverage", ".next", ".nuxt",
+        ".vite", "out", "tmp", "temp", ".turbo", ".electron",
         "package-lock.json", "yarn.lock", "pnpm-lock.yaml"
       ]);
 

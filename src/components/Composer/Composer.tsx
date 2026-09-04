@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Paperclip, ArrowUp, Sparkles, ChevronUp, X, Clock, Terminal, Zap, Shield, HelpCircle, Layers, Wrench, Globe } from 'lucide-react';
+import { Paperclip, ArrowUp, Sparkles, ChevronUp, X, Clock, Terminal, Zap, Shield, HelpCircle, Layers, Wrench, Globe, MessageSquare, FileEdit } from 'lucide-react';
 import { AttachedImage, QueuedInstruction } from '@/types/session';
 import { ModelOption } from '@/types/provider';
 import { SkillItem, PermissionMode } from '@/types/electron';
@@ -359,77 +359,150 @@ export const Composer: React.FC<ComposerProps> = ({
         {/* 底部功能条与发送按钮 */}
         <div className="flex items-center justify-between px-3 pb-2 pt-1 border-t border-border-light text-[11px] text-text-muted">
           <div className="flex items-center gap-2.5">
-            {/* 安全权限模式胶囊 */}
+            {/* 安全权限模式胶囊 (4 级主流工业级权限体系) */}
             <div ref={permissionPickerRef} className="relative">
               <button
                 type="button"
                 onClick={() => setShowPermissionPicker(!showPermissionPicker)}
                 className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium border transition-colors cursor-pointer shadow-xs ${
-                  permissionMode === 'full-access'
+                  permissionMode === 'chat-only'
+                    ? 'bg-slate-500/15 text-slate-300 border-slate-500/30 hover:bg-slate-500/25'
+                    : permissionMode === 'workspace-readwrite'
+                    ? 'bg-sky-500/10 text-sky-400 border-sky-500/30 hover:bg-sky-500/20'
+                    : permissionMode === 'full-access'
                     ? 'bg-amber-500/10 text-amber-400 border-amber-500/30 hover:bg-amber-500/20'
                     : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
                 }`}
-                title="点击切换 Agent 运行权限沙箱"
+                title="点击切换 Agent 运行安全权限沙箱"
               >
-                {permissionMode === 'full-access' ? (
+                {permissionMode === 'chat-only' && (
                   <>
-                    <Globe size={11} className="shrink-0 text-amber-400" />
-                    <span>全局受信任</span>
+                    <MessageSquare size={11} className="shrink-0 text-slate-300" />
+                    <span>纯对话咨询</span>
                   </>
-                ) : (
+                )}
+                {permissionMode === 'workspace-readonly' && (
                   <>
                     <Shield size={11} className="shrink-0 text-emerald-400" />
                     <span>工作区只读</span>
                   </>
                 )}
+                {permissionMode === 'workspace-readwrite' && (
+                  <>
+                    <FileEdit size={11} className="shrink-0 text-sky-400" />
+                    <span>工作区读写</span>
+                  </>
+                )}
+                {permissionMode === 'full-access' && (
+                  <>
+                    <Globe size={11} className="shrink-0 text-amber-400" />
+                    <span>全局受信任</span>
+                  </>
+                )}
                 <ChevronUp size={10} className={`transition-transform duration-200 ${showPermissionPicker ? 'rotate-180' : ''}`} />
               </button>
 
-              {/* 权限选择浮层 */}
+              {/* 4 级精细化权限选择浮层 */}
               {showPermissionPicker && (
-                <div className="absolute bottom-full left-0 mb-2 w-72 bg-bg-card border border-border rounded-xl shadow-2xl overflow-hidden z-50 animate-fadeIn select-none">
+                <div className="absolute bottom-full left-0 mb-2 w-80 sm:w-84 bg-bg-card border border-border rounded-xl shadow-2xl overflow-hidden z-50 animate-fadeIn select-none">
                   <div className="p-2.5 bg-bg-sidebar border-b border-border flex items-center justify-between text-xs font-semibold text-text-primary">
-                    <span>安全沙箱权限等级</span>
-                    <span className="text-[10px] text-accent font-mono">主进程绝对权威</span>
+                    <span>安全沙箱运行权限</span>
+                    <span className="text-[10px] text-accent font-mono font-bold">主进程绝对权威</span>
                   </div>
                   <div className="p-1.5 space-y-1">
+                    {/* 1. 纯对话模式 */}
+                    <div
+                      onClick={() => {
+                        onSelectPermissionMode('chat-only');
+                        setShowPermissionPicker(false);
+                      }}
+                      className={`p-2 rounded-lg cursor-pointer text-xs transition-colors space-y-0.5 border ${
+                        permissionMode === 'chat-only'
+                          ? 'bg-slate-500/15 border-slate-400/50 text-slate-200 shadow-2xs'
+                          : 'border-transparent hover:bg-bg-hover text-text-secondary'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 font-semibold text-text-primary">
+                          <MessageSquare size={13} className="text-slate-300 shrink-0" />
+                          <span>纯对话咨询 (零文件访问)</span>
+                        </div>
+                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-slate-500/20 text-slate-300 font-mono">隐私防线</span>
+                      </div>
+                      <p className="text-[11px] text-text-muted leading-tight">
+                        完全屏蔽本地文件与工程目录读取，不注水任何代码上下文，零隐私泄密顾虑。
+                      </p>
+                    </div>
+
+                    {/* 2. 工作区只读 */}
                     <div
                       onClick={() => {
                         onSelectPermissionMode('workspace-readonly');
                         setShowPermissionPicker(false);
                       }}
-                      className={`p-2 rounded-lg cursor-pointer text-xs transition-colors space-y-0.5 ${
+                      className={`p-2 rounded-lg cursor-pointer text-xs transition-colors space-y-0.5 border ${
                         permissionMode === 'workspace-readonly'
-                          ? 'bg-emerald-500/15 border border-emerald-500/40 text-emerald-300'
-                          : 'hover:bg-bg-hover text-text-secondary'
+                          ? 'bg-emerald-500/15 border-emerald-500/50 text-emerald-200 shadow-2xs'
+                          : 'border-transparent hover:bg-bg-hover text-text-secondary'
                       }`}
                     >
-                      <div className="flex items-center gap-1.5 font-semibold text-text-primary">
-                        <Shield size={13} className="text-emerald-400 shrink-0" />
-                        <span>工作区只读 (默认推荐)</span>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 font-semibold text-text-primary">
+                          <Shield size={13} className="text-emerald-400 shrink-0" />
+                          <span>工作区只读 (默认推荐)</span>
+                        </div>
+                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-mono">代码审计</span>
                       </div>
                       <p className="text-[11px] text-text-muted leading-tight">
-                        仅允许读取当前已选工作区代码与文件树，严禁访问工作区外部物理路径。
+                        仅允许读取已选工作区代码与文件树大纲，严禁写入，严禁跨越工作区外部。
                       </p>
                     </div>
 
+                    {/* 3. 工作区读写 */}
+                    <div
+                      onClick={() => {
+                        onSelectPermissionMode('workspace-readwrite');
+                        setShowPermissionPicker(false);
+                      }}
+                      className={`p-2 rounded-lg cursor-pointer text-xs transition-colors space-y-0.5 border ${
+                        permissionMode === 'workspace-readwrite'
+                          ? 'bg-sky-500/15 border-sky-500/50 text-sky-200 shadow-2xs'
+                          : 'border-transparent hover:bg-bg-hover text-text-secondary'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 font-semibold text-text-primary">
+                          <FileEdit size={13} className="text-sky-400 shrink-0" />
+                          <span>工作区读写 (自动编码)</span>
+                        </div>
+                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-sky-500/20 text-sky-300 font-mono">全能开发</span>
+                      </div>
+                      <p className="text-[11px] text-text-muted leading-tight">
+                        允许在当前工作区内部读取、创建与编辑代码，物理严格锁死在工程边界内。
+                      </p>
+                    </div>
+
+                    {/* 4. 全局受信任 */}
                     <div
                       onClick={() => {
                         onSelectPermissionMode('full-access');
                         setShowPermissionPicker(false);
                       }}
-                      className={`p-2 rounded-lg cursor-pointer text-xs transition-colors space-y-0.5 ${
+                      className={`p-2 rounded-lg cursor-pointer text-xs transition-colors space-y-0.5 border ${
                         permissionMode === 'full-access'
-                          ? 'bg-amber-500/15 border border-amber-500/40 text-amber-300'
-                          : 'hover:bg-bg-hover text-text-secondary'
+                          ? 'bg-amber-500/15 border-amber-500/50 text-amber-200 shadow-2xs'
+                          : 'border-transparent hover:bg-bg-hover text-text-secondary'
                       }`}
                     >
-                      <div className="flex items-center gap-1.5 font-semibold text-text-primary">
-                        <Globe size={13} className="text-amber-400 shrink-0" />
-                        <span>全局受信任 (完全控制)</span>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 font-semibold text-text-primary">
+                          <Globe size={13} className="text-amber-400 shrink-0" />
+                          <span>全局受信任 (完全控制)</span>
+                        </div>
+                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-mono">系统级</span>
                       </div>
                       <p className="text-[11px] text-text-muted leading-tight">
-                        允许跨工程读取本机任意系统文件，切换时触发主进程系统级确认弹窗。
+                        允许跨工程读取本机任意系统路径文件，切换时触发主进程系统级确认弹窗。
                       </p>
                     </div>
                   </div>

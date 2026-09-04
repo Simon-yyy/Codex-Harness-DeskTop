@@ -13,10 +13,20 @@ export interface ChatMessage {
   timestamp: number;
 }
 
+export interface WorkspaceFolder {
+  id: string;
+  path: string;
+  name: string;
+}
+
 export interface ChatSession {
   id: string;
   title: string;
   updatedAt: number;
+  workspaceDir?: string;
+  workspaceName?: string;
+  isArchived?: boolean;
+  forkedFrom?: string;
   messages: ChatMessage[];
 }
 
