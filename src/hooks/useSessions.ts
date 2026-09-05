@@ -23,7 +23,11 @@ export function useSessions() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
+          // 彻底自愈历史遗留数据：所有会话均正常展示，杜绝冷冻隐藏
+          return parsed.map((s: any) => ({
+            ...s,
+            isArchived: false
+          }));
         }
       }
     } catch (e) {
@@ -119,6 +123,26 @@ export function useSessions() {
     }));
   };
 
+  const moveSessionToWorkspace = (
+    sessionId: string,
+    targetWorkspaceDir?: string,
+    targetWorkspaceName?: string,
+    _archive?: boolean
+  ) => {
+    setSessions(prev => prev.map(s => {
+      if (s.id === sessionId) {
+        return {
+          ...s,
+          workspaceDir: targetWorkspaceDir,
+          workspaceName: targetWorkspaceName,
+          isArchived: false,
+          updatedAt: Date.now()
+        };
+      }
+      return s;
+    }));
+  };
+
   const deleteSession = (sessionId: string) => {
     setSessions(prev => {
       if (prev.length <= 1) {
@@ -206,6 +230,35 @@ export function useSessions() {
     }));
   };
 
+  const rollbackMessage = (messageIndex: number): ChatMessage | null => {
+    let targetMsg: ChatMessage | null = null;
+    const targetSession = sessions.find(s => s.id === currentSessionId);
+    if (targetSession && messageIndex >= 0 && messageIndex < targetSession.messages.length) {
+      targetMsg = targetSession.messages[messageIndex];
+    }
+
+    setSessions(prev => prev.map(s => {
+      if (s.id === currentSessionId) {
+        if (messageIndex >= 0 && messageIndex < s.messages.length) {
+          // 移除当前消息；若下一条紧邻助手回复，则撤回完整问答轮次
+          let deleteCount = 1;
+          if (messageIndex + 1 < s.messages.length && s.messages[messageIndex + 1].role === 'assistant') {
+            deleteCount = 2;
+          }
+          const updated = [...s.messages];
+          updated.splice(messageIndex, deleteCount);
+          return {
+            ...s,
+            updatedAt: Date.now(),
+            messages: updated
+          };
+        }
+      }
+      return s;
+    }));
+    return targetMsg;
+  };
+
   return {
     sessions,
     currentSessionId,
@@ -216,10 +269,12 @@ export function useSessions() {
     updateCurrentSessionWorkspace,
     forkSession,
     toggleArchiveSession,
+    moveSessionToWorkspace,
     deleteSession,
     addMessageToCurrentSession,
     updateLastMessageInCurrentSession,
     clearCurrentSessionMessages,
-    exportCurrentSessionAsMarkdown
+    exportCurrentSessionAsMarkdown,
+    rollbackMessage
   };
 }

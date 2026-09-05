@@ -34,3 +34,6 @@ Thumbs.db
 
 # Agent Harness Traces
 .agent/
+
+# 技能临时测试生成物
+.agents/skills/**/test-results.md

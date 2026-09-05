@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Bot, User, ChevronDown, ChevronRight, Copy, Check, Sparkles, ArrowDown, Loader2 } from 'lucide-react';
+import { Bot, User, ChevronDown, ChevronRight, Copy, Check, Sparkles, ArrowDown, Loader2, Undo2 } from 'lucide-react';
 import { ChatMessage } from '@/types/session';
+import { PermissionMode } from '@/types/electron';
 import { MarkdownRenderer } from './MarkdownRenderer';
 
 interface ChatStreamProps {
@@ -8,13 +9,19 @@ interface ChatStreamProps {
   isGenerating?: boolean;
   currentModel?: string;
   onOpenLightbox: (src: string) => void;
+  permissionMode?: PermissionMode;
+  onFileWritten?: (filePath: string) => void;
+  onRevokeMessage?: (messageIndex: number) => void;
 }
 
 export const ChatStream: React.FC<ChatStreamProps> = ({
   messages,
   isGenerating = false,
   currentModel = 'gpt-5.6-sol',
-  onOpenLightbox
+  onOpenLightbox,
+  permissionMode,
+  onFileWritten,
+  onRevokeMessage,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const streamEndRef = useRef<HTMLDivElement>(null);
@@ -77,12 +84,13 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
   };
 
   return (
-    <div
-      ref={containerRef}
-      onScroll={handleScroll}
-      className="relative flex-1 overflow-y-auto px-3 sm:px-6 md:px-8 py-6 space-y-6 scroll-smooth"
-    >
-      <div className="w-full max-w-4xl 2xl:max-w-5xl mx-auto space-y-7">
+    <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">
+      <div
+        ref={containerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto px-3 sm:px-6 md:px-8 py-6 space-y-6 scroll-smooth"
+      >
+        <div className="w-full max-w-4xl 2xl:max-w-5xl mx-auto space-y-7">
         {messages.length === 0 && (
           <div className="text-center py-20 text-text-muted space-y-3">
             <div className="w-12 h-12 rounded-2xl bg-accent/10 text-accent flex items-center justify-center mx-auto text-xl shadow-xs">
@@ -137,19 +145,33 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                     </div>
                   )}
 
-                  {/* 用户卡片底部操作栏 (时间戳 + 复制指令按钮) */}
+                  {/* 用户卡片底部操作栏 (时间戳 + 撤回修改 + 复制指令) */}
                   <div className="flex items-center justify-between pt-2 border-t border-border/50 text-[11px] text-text-muted">
                     <span>{new Date(msg.timestamp).toLocaleTimeString()}</span>
-                    <button
-                      onClick={() => copyToClipboard(msg.content, idx)}
-                      className="flex items-center gap-1 px-2 py-0.5 rounded-md hover:bg-bg-hover text-text-secondary hover:text-text-primary transition-colors text-[11px] font-medium"
-                      title="复制我的指令"
-                    >
-                      {copiedIdx === idx ? <Check size={11} className="text-emerald-500" /> : <Copy size={11} />}
-                      <span className={copiedIdx === idx ? 'text-emerald-500 font-semibold' : ''}>
-                        {copiedIdx === idx ? '已复制' : '复制指令'}
-                      </span>
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      {onRevokeMessage && (
+                        <button
+                          type="button"
+                          onClick={() => onRevokeMessage(idx)}
+                          className="flex items-center gap-1 px-2 py-0.5 rounded-md hover:bg-bg-hover text-text-secondary hover:text-accent transition-colors text-[11px] font-medium cursor-pointer"
+                          title="撤回该提问并回填到输入框重新编辑"
+                        >
+                          <Undo2 size={11} />
+                          <span>撤回修改</span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => copyToClipboard(msg.content, idx)}
+                        className="flex items-center gap-1 px-2 py-0.5 rounded-md hover:bg-bg-hover text-text-secondary hover:text-text-primary transition-colors text-[11px] font-medium cursor-pointer"
+                        title="复制我的指令"
+                      >
+                        {copiedIdx === idx ? <Check size={11} className="text-emerald-500" /> : <Copy size={11} />}
+                        <span className={copiedIdx === idx ? 'text-emerald-500 font-semibold' : ''}>
+                          {copiedIdx === idx ? '已复制' : '复制指令'}
+                        </span>
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -195,7 +217,12 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
 
                 {/* 正文内容：采用对齐主流 Agent 的专业 Markdown 与代码块渲染器 */}
                 <div className="text-xs text-text-primary leading-relaxed break-words select-text">
-                  <MarkdownRenderer content={msg.content} />
+                  <MarkdownRenderer
+                    content={msg.content}
+                    permissionMode={permissionMode}
+                    onFileWritten={onFileWritten}
+                    isStreaming={isGenerating && idx === messages.length - 1}
+                  />
                 </div>
 
                 {/* 底部轻量操作栏 (时间戳与复制按钮) */}
@@ -240,18 +267,22 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
         )}
 
         <div ref={streamEndRef} />
+        </div>
       </div>
 
-      {/* 优化后的悬浮【回到底部】按钮：脱离底部输入框干扰，优雅沉浸 */}
+      {/* 居中悬浮【回到底部】按钮：位于消息流正下方居中，永不遮挡输入框及右侧附件按钮 */}
       {showScrollBottom && (
-        <button
-          onClick={handleManualScrollToBottom}
-          className="fixed bottom-28 right-8 z-30 px-3 py-2 bg-bg-card-elevated/95 backdrop-blur-md hover:bg-accent hover:text-white border border-border shadow-md rounded-full text-text-secondary transition-all transform hover:scale-105 flex items-center gap-1.5 text-xs group"
-          title="回到底部最新消息"
-        >
-          <ArrowDown size={13} className="group-hover:translate-y-0.5 transition-transform" />
-          <span className="font-medium pr-0.5">回到底部</span>
-        </button>
+        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 pointer-events-none animate-fadeIn">
+          <button
+            type="button"
+            onClick={handleManualScrollToBottom}
+            className="pointer-events-auto px-3.5 py-1.5 bg-bg-card/95 backdrop-blur-md hover:bg-accent hover:text-white border border-border shadow-lg rounded-full text-text-secondary transition-all transform hover:scale-105 flex items-center gap-1.5 text-xs font-medium cursor-pointer active:scale-95 group"
+            title="回到底部最新消息"
+          >
+            <ArrowDown size={13} className="text-accent group-hover:text-white transition-colors" />
+            <span>回到底部</span>
+          </button>
+        </div>
       )}
     </div>
   );

@@ -182,12 +182,14 @@ contextBridge.exposeInMainWorld("codexDesktop", {
     ipcRenderer.on("llm-stream-chunk", handler);
     return () => ipcRenderer.removeListener("llm-stream-chunk", handler);
   },
+  abortLlmStream: (streamId) => ipcRenderer.invoke("abort-llm-stream", streamId),
   selectWorkspaceDir: () => ipcRenderer.invoke("select-workspace-dir"),
   setWorkspaceDir: (dirPath) => ipcRenderer.invoke("set-workspace-dir", dirPath),
   readWorkspaceTree: (dirPath) => ipcRenderer.invoke("read-workspace-tree", dirPath),
   getSecurityStatus: () => ipcRenderer.invoke("get-security-status"),
   setPermissionMode: (mode) => ipcRenderer.invoke("set-permission-mode", mode),
   readWorkspaceFile: (relativePath) => ipcRenderer.invoke("read-workspace-file", { relativePath }),
+  writeWorkspaceFile: (payload) => ipcRenderer.invoke("write-workspace-file", payload),
   onThemeChange: (callback) => {
     ipcRenderer.on("theme-change", (_event, theme) => callback(theme));
   },

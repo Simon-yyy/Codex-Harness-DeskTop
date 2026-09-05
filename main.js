@@ -621,6 +621,25 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
   // -------------------------------------------------------------------------
   // 6. 底层原生大模型 API 请求管道 (Node.js 原生请求，模拟标准客户端防拦截)
   // -------------------------------------------------------------------------
+  const activeLlmStreams = new Map();
+
+  ipcMain.handle("abort-llm-stream", (_event, streamId) => {
+    if (streamId && activeLlmStreams.has(streamId)) {
+      const info = activeLlmStreams.get(streamId);
+      if (info) {
+        if (typeof info.clearActiveTimer === 'function') info.clearActiveTimer();
+        if (info.req) {
+          try {
+            info.req.destroy();
+          } catch (e) {}
+        }
+      }
+      activeLlmStreams.delete(streamId);
+      return { success: true };
+    }
+    return { success: false, notFound: true };
+  });
+
   // 原生 Node.js 底层 HTTP 请求管道 (通用双协议自适应: OpenAI 兼容 & Anthropic 原生)
   // 原生 Node.js 底层 HTTP 请求管道 (通用双协议自适应 + 智能故障自愈重试)
   ipcMain.handle("call-llm-api", async (event, payload) => {
@@ -728,6 +747,9 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
         };
 
         const req = client.request(options, (res) => {
+          if (stream && streamId) {
+            activeLlmStreams.set(streamId, { req, clearActiveTimer });
+          }
           let responseBody = "";
           res.setEncoding("utf8");
 
@@ -1252,7 +1274,123 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
   });
 
   // ---------------------------------------------------------------------------
-  // 带有规模控制 (200项上限 + 深度截断 + 黑名单) 的工作区文件树读取
+  // 权威安全沙箱文件写入通道 (必须要求 workspace-readwrite 或 full-access)
+  // ---------------------------------------------------------------------------
+  ipcMain.handle("write-workspace-file", async (_event, payload) => {
+    const relativePath = typeof payload === "string" ? payload : payload?.relativePath;
+    const content = payload?.content ?? "";
+    const createBackup = payload?.createBackup !== false;
+
+    if (!relativePath || typeof relativePath !== "string") {
+      return {
+        ok: false,
+        code: "INVALID_ARGUMENT",
+        reason: "文件相对路径不能为空",
+        hint: "请指定有效的文件相对路径"
+      };
+    }
+
+    const mode = SecuritySandbox.permissionMode;
+    const workspace = SecuritySandbox.activeWorkspaceDir;
+
+    // 1. 权限拦截：必须为 workspace-readwrite 或 full-access 模式
+    if (mode === "chat-only" || mode === "workspace-readonly") {
+      SecuritySandbox.logAudit("BLOCKED_WRITE_READONLY", relativePath);
+      return {
+        ok: false,
+        code: "PERMISSION_DENIED",
+        reason: `当前运行权限为【${mode === 'chat-only' ? '纯对话模式' : '工作区只读模式'}】，严禁向本地文件写入任何修改`,
+        hint: "请在输入框左侧将权限模式切换为【✍️ 工作区读写】或【🌐 全局受信任】后再执行写入"
+      };
+    }
+
+    let candidatePath = "";
+
+    // 2. 工作区读写模式：严格限制在 workspace 物理边界内部
+    if (mode === "workspace-readwrite") {
+      if (!workspace) {
+        return {
+          ok: false,
+          code: "NO_WORKSPACE",
+          reason: "当前会话尚未绑定工作区工程目录",
+          hint: "请在左侧栏选择或打开工程工作区"
+        };
+      }
+
+      candidatePath = path.resolve(workspace, relativePath);
+
+      // 防 ../ 穿越或跨盘符逃逸
+      try {
+        const realWorkspace = fs.realpathSync(workspace);
+        const targetDir = path.dirname(candidatePath);
+        if (!fs.existsSync(targetDir)) {
+          fs.mkdirSync(targetDir, { recursive: true });
+        }
+        const realParent = fs.realpathSync(targetDir);
+        const rel = path.relative(realWorkspace, realParent);
+        const isContained = !rel.startsWith("..") && !path.isAbsolute(rel);
+
+        if (!isContained) {
+          SecuritySandbox.logAudit("BLOCKED_WRITE_TRAVERSAL", candidatePath);
+          return {
+            ok: false,
+            code: "PERMISSION_DENIED",
+            reason: "目标文件指向工作区外部物理路径 (越权写入或软链接逃逸已拦截)",
+            hint: "工作区读写模式下，严禁向工作区外部写入文件"
+          };
+        }
+      } catch (err) {
+        return {
+          ok: false,
+          code: "REALPATH_ERROR",
+          reason: `解析工作区路径失败: ${err.message}`
+        };
+      }
+    } else {
+      // 3. 全局受信任模式 (full-access)
+      candidatePath = workspace ? path.resolve(workspace, relativePath) : path.resolve(relativePath);
+      const parentDir = path.dirname(candidatePath);
+      if (!fs.existsSync(parentDir)) {
+        fs.mkdirSync(parentDir, { recursive: true });
+      }
+    }
+
+    try {
+      // 自动创建 .bak 历史安全备份
+      let backupPath = null;
+      if (createBackup && fs.existsSync(candidatePath)) {
+        backupPath = `${candidatePath}.bak`;
+        try {
+          fs.copyFileSync(candidatePath, backupPath);
+        } catch (e) {}
+      }
+
+      // 执行物理写盘
+      fs.writeFileSync(candidatePath, content, "utf8");
+      SecuritySandbox.logAudit("WRITE_FILE_SUCCESS", candidatePath);
+
+      return {
+        ok: true,
+        relativePath,
+        fullPath: candidatePath,
+        bytesWritten: Buffer.byteLength(content, "utf8"),
+        backupPath,
+        permissionMode: mode
+      };
+    } catch (err) {
+      SecuritySandbox.logAudit("WRITE_FILE_FAILED", candidatePath, err.message);
+      return {
+        ok: false,
+        code: "WRITE_ERROR",
+        reason: `写入文件失败: ${err.message}`,
+        hint: "请检查该文件是否被其他编辑器或系统进程占用锁定"
+      };
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // 工业级工作区工程文件树读取 (3000项容量 + 10层深度 + 软链接防环 + 智能白名单)
   // ---------------------------------------------------------------------------
   ipcMain.handle("read-workspace-tree", async (_event, dirPath) => {
     const targetDir = (typeof dirPath === "string" && dirPath) ? dirPath : SecuritySandbox.activeWorkspaceDir;
@@ -1261,19 +1399,33 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
       if (!fs.existsSync(targetDir)) return null;
       const realTarget = fs.realpathSync(targetDir);
 
+      // 仅精准排除巨型第三方依赖包与本地中间缓存
       const IGNORED = new Set([
         "node_modules", ".git", ".svn", ".hg", "dist", "build", ".cache",
-        ".vscode", ".idea", ".agent", "release", "coverage", ".next", ".nuxt",
-        ".vite", "out", "tmp", "temp", ".turbo", ".electron",
-        "package-lock.json", "yarn.lock", "pnpm-lock.yaml"
+        "release", "coverage", ".next", ".nuxt", ".vite", "out", "tmp", "temp",
+        ".turbo", ".electron", "package-lock.json", "yarn.lock", "pnpm-lock.yaml"
+      ]);
+
+      // 显式允许的合法项目工程与配置目录/文件
+      const ALLOWED_DOT_NAMES = new Set([
+        ".agents", ".github", ".vscode", ".env", ".gitignore", ".npmrc",
+        ".editorconfig", ".prettierrc", ".eslintrc", ".commitlintrc", ".husky"
       ]);
 
       let totalItemCount = 0;
-      const MAX_TOTAL_ITEMS = 200; // 硬截断阈值，防止大项目撑爆
+      const MAX_TOTAL_ITEMS = 3000; // 放宽至 3000 项，满足绝大多数工业级项目
+      const MAX_DEPTH = 10;         // 深度放宽至 10 层，彻底解决深层目录空白问题
+      const visitedRealPaths = new Set([realTarget]);
 
       function buildTree(currentPath, depth = 0) {
-        if (depth > 3 || totalItemCount >= MAX_TOTAL_ITEMS) return [];
-        const entries = fs.readdirSync(currentPath, { withFileTypes: true });
+        if (depth > MAX_DEPTH || totalItemCount >= MAX_TOTAL_ITEMS) return [];
+        let entries = [];
+        try {
+          entries = fs.readdirSync(currentPath, { withFileTypes: true });
+        } catch (e) {
+          return [];
+        }
+
         const items = [];
 
         entries.sort((a, b) => {
@@ -1285,9 +1437,19 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
 
         for (const entry of entries) {
           if (totalItemCount >= MAX_TOTAL_ITEMS) break;
-          if (entry.name.startsWith(".") && entry.name !== ".env" && entry.name !== ".gitignore") {
-            continue;
+
+          // 过滤无意义的系统临时隐藏文件，但放行开发常用的 .agents, .github, .env 等工程配置
+          if (entry.name.startsWith(".")) {
+            const isAllowed = ALLOWED_DOT_NAMES.has(entry.name) ||
+                              entry.name.startsWith(".env.") ||
+                              entry.name.endsWith(".json") ||
+                              entry.name.endsWith(".js") ||
+                              entry.name.endsWith(".ts") ||
+                              entry.name.endsWith(".yml") ||
+                              entry.name.endsWith(".yaml");
+            if (!isAllowed) continue;
           }
+
           if (IGNORED.has(entry.name)) continue;
 
           totalItemCount++;
@@ -1295,6 +1457,13 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
           const relativePath = path.relative(realTarget, fullPath).replace(/\\/g, "/");
 
           if (entry.isDirectory()) {
+            // 防软链接死循环
+            try {
+              const realFolder = fs.realpathSync(fullPath);
+              if (visitedRealPaths.has(realFolder)) continue;
+              visitedRealPaths.add(realFolder);
+            } catch (e) {}
+
             items.push({
               name: entry.name,
               path: relativePath,

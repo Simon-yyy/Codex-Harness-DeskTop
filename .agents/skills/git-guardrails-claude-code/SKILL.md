@@ -25,14 +25,13 @@ Ask the user: install for **this project only** (`.claude/settings.json`) or **a
 
 ### 2. Copy the hook script
 
-The bundled script is at: [scripts/block-dangerous-git.sh](scripts/block-dangerous-git.sh)
+The bundled scripts are:
+- **Cross-platform (Recommended)**: [scripts/block-dangerous-git.mjs](scripts/block-dangerous-git.mjs) (Runs natively on Windows, macOS, Linux with Node.js)
+- **POSIX Shell**: [scripts/block-dangerous-git.sh](scripts/block-dangerous-git.sh) (Requires Bash and jq)
 
-Copy it to the target location based on scope:
-
-- **Project**: `.claude/hooks/block-dangerous-git.sh`
-- **Global**: `~/.claude/hooks/block-dangerous-git.sh`
-
-Make it executable with `chmod +x`.
+Copy the script to the target location:
+- **Project**: `.claude/hooks/block-dangerous-git.mjs` (or `.sh`)
+- **Global**: `~/.claude/hooks/block-dangerous-git.mjs` (or `.sh`)
 
 ### 3. Add hook to settings
 

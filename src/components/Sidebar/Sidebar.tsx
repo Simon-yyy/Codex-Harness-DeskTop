@@ -21,9 +21,7 @@ import {
   FolderPlus,
   MoreHorizontal,
   GitFork,
-  Archive,
   Search,
-  SlidersHorizontal,
   X,
   Bug
 } from 'lucide-react';
@@ -31,6 +29,7 @@ import { ChatSession, WorkspaceFolder } from '@/types/session';
 import { SkillItem, WorkspaceFileItem } from '@/types/electron';
 import { SKILL_CATEGORIES, SkillCategory, getSkillDisplayInfo, SKILLS_DICTIONARY } from '@/data/skillsDictionary';
 import { SkillDetailModal } from '@/components/Modals/SkillDetailModal';
+import { ArchiveModal } from '@/components/Modals/ArchiveModal';
 
 function formatRelativeTime(timestamp: number): string {
   if (!timestamp) return '';
@@ -45,6 +44,11 @@ function formatRelativeTime(timestamp: number): string {
   return `${Math.floor(days / 30)}月前`;
 }
 
+function normalizeFsPath(p?: string | null): string {
+  if (!p) return '';
+  return p.trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
 interface SidebarProps {
   sessions: ChatSession[];
   currentSessionId: string;
@@ -53,6 +57,12 @@ interface SidebarProps {
   onNewSessionInWorkspace?: (workspaceDir?: string, workspaceName?: string) => void;
   onForkSession?: (sessionId: string) => void;
   onArchiveSession?: (sessionId: string) => void;
+  onMoveSessionToWorkspace?: (
+    sessionId: string,
+    targetWorkspaceDir?: string,
+    targetWorkspaceName?: string,
+    archive?: boolean
+  ) => void;
   onDeleteSession: (id: string) => void;
   onRenameSession?: (id: string, newTitle: string) => void;
   onInsertPrompt: (text: string) => void;
@@ -73,6 +83,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onNewSessionInWorkspace,
   onForkSession,
   onArchiveSession,
+  onMoveSessionToWorkspace,
   onDeleteSession,
   onRenameSession,
   onInsertPrompt,
@@ -94,11 +105,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   const [activeMenuSessionId, setActiveMenuSessionId] = useState<string | null>(null);
+  const [archiveModalSession, setArchiveModalSession] = useState<ChatSession | null>(null);
 
   // 搜索与过滤状态
   const [isSearchingSession, setIsSearchingSession] = useState(false);
   const [sessionSearchQuery, setSessionSearchQuery] = useState('');
-  const [showOnlyArchived, setShowOnlyArchived] = useState(false);
 
   // DSH 风格多工作区常驻列表 (保存在 localStorage)
   const [workspaceFolders, setWorkspaceFolders] = useState<WorkspaceFolder[]>(() => {
@@ -168,6 +179,43 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
+  // 归档弹窗专用的选择新工作区回调
+  const handleSelectNewFolderForArchive = async (): Promise<WorkspaceFolder | null> => {
+    if (window.codexDesktop?.selectWorkspaceDir) {
+      const selected = await window.codexDesktop.selectWorkspaceDir();
+      if (selected) {
+        const name = selected.replace(/[\\/]$/, '').split(/[\\/]/).pop() || '工程';
+        const newFolder: WorkspaceFolder = { id: selected, path: selected, name };
+        setWorkspaceFolders(prev => {
+          if (prev.some(f => f.path === selected)) return prev;
+          const updated = [...prev, newFolder];
+          localStorage.setItem('codex_workspace_folders_v1', JSON.stringify(updated));
+          return updated;
+        });
+        return newFolder;
+      }
+    }
+    return null;
+  };
+
+  // 确认将某个会话归档/移动到指定工作区
+  const handleConfirmArchive = (
+    sessionId: string,
+    targetWorkspaceDir?: string,
+    targetWorkspaceName?: string,
+    archive?: boolean
+  ) => {
+    if (onMoveSessionToWorkspace) {
+      onMoveSessionToWorkspace(sessionId, targetWorkspaceDir, targetWorkspaceName, archive);
+    } else if (onArchiveSession) {
+      onArchiveSession(sessionId);
+    }
+    // 自动展开目标工作区树
+    if (targetWorkspaceDir) {
+      setCollapsedWorkspaces(prev => ({ ...prev, [targetWorkspaceDir]: false }));
+    }
+  };
+
   const toggleWorkspaceCollapse = (key: string) => {
     setCollapsedWorkspaces(prev => ({ ...prev, [key]: !prev[key] }));
   };
@@ -199,18 +247,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
+  // 仅在外部 activeWorkspaceDir 变动（会话切换/工作区切换）时，单向同步 Sidebar 内部状态
   useEffect(() => {
-    if (workspacePath) {
-      loadWorkspaceTree(workspacePath);
-      if (onWorkspaceChange) onWorkspaceChange(workspacePath);
-    }
-  }, [workspacePath]);
-
-  // 当外部 activeWorkspaceDir 变动（如会话切换）时同步内部状态
-  useEffect(() => {
-    if (activeWorkspaceDir !== undefined && activeWorkspaceDir !== null && activeWorkspaceDir !== workspacePath) {
-      setWorkspacePath(activeWorkspaceDir);
-      localStorage.setItem('codex_workspace_dir', activeWorkspaceDir);
+    const nextPath = activeWorkspaceDir || '';
+    if (nextPath !== workspacePath) {
+      setWorkspacePath(nextPath);
+      if (nextPath) {
+        localStorage.setItem('codex_workspace_dir', nextPath);
+        loadWorkspaceTree(nextPath);
+      } else {
+        setWorkspaceTree([]);
+        setWorkspaceName('');
+      }
     }
   }, [activeWorkspaceDir]);
 
@@ -382,9 +430,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Tab 1: DSH 风格多工作区树与会话归档管理 */}
         {activeTab === 'sessions' && (
           <div className="space-y-2">
-            {/* 工作区标题工具条 (1:1 复刻 DSH 截图 1) */}
+            {/* 工作区标题工具条 (1:1 复刻 DSH 风格) */}
             <div className="flex items-center justify-between px-1 pt-1 text-xs font-semibold text-text-primary select-none">
-              <span className="tracking-wide">工作区</span>
+              <span className="tracking-wide">工作区项目</span>
               <div className="flex items-center gap-0.5 text-text-muted">
                 <button
                   type="button"
@@ -392,25 +440,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   className={`p-1 rounded hover:text-text-primary hover:bg-bg-hover transition-colors ${
                     isSearchingSession || sessionSearchQuery ? 'text-accent bg-accent/10' : ''
                   }`}
-                  title="搜索工作区或会话"
+                  title="搜索项目或会话"
                 >
                   <Search size={13} />
                 </button>
                 <button
                   type="button"
-                  onClick={() => setShowOnlyArchived(!showOnlyArchived)}
-                  className={`p-1 rounded hover:text-text-primary hover:bg-bg-hover transition-colors ${
-                    showOnlyArchived ? 'text-amber-400 bg-amber-400/10' : ''
-                  }`}
-                  title={showOnlyArchived ? '显示全部会话' : '仅查看已归档会话'}
-                >
-                  <SlidersHorizontal size={13} />
-                </button>
-                <button
-                  type="button"
                   onClick={handleAddWorkspaceFolder}
                   className="p-1 rounded hover:text-accent hover:bg-bg-hover transition-colors text-accent"
-                  title="添加本地文件夹至工作区"
+                  title="添加本地项目文件夹"
                 >
                   <FolderPlus size={14} />
                 </button>
@@ -424,7 +462,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   type="text"
                   value={sessionSearchQuery}
                   onChange={(e) => setSessionSearchQuery(e.target.value)}
-                  placeholder="过滤工作区或会话..."
+                  placeholder="过滤项目或会话..."
                   autoFocus
                   className="w-full text-xs px-2 py-1 pr-6 bg-bg-card border border-border rounded-md text-text-primary outline-none focus:border-accent"
                 />
@@ -444,14 +482,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div className="space-y-1.5">
               {/* 1. 各个已挂载工作区文件夹 */}
               {workspaceFolders.map((wf) => {
-                const isCollapsed = !!collapsedWorkspaces[wf.path];
                 const matchedSessions = sessions.filter((s) => {
-                  const matchWs = s.workspaceDir === wf.path;
-                  const matchArchived = showOnlyArchived ? s.isArchived : !s.isArchived;
+                  const matchWs = normalizeFsPath(s.workspaceDir) === normalizeFsPath(wf.path);
                   const matchQuery = !sessionSearchQuery.trim() ||
                     (s.title && s.title.toLowerCase().includes(sessionSearchQuery.toLowerCase())) ||
                     wf.name.toLowerCase().includes(sessionSearchQuery.toLowerCase());
-                  return matchWs && matchArchived && matchQuery;
+                  return matchWs && matchQuery;
                 });
 
                 // 即使没有会话，文件夹也展示供添加
@@ -459,22 +495,62 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   return null;
                 }
 
+                // 包含当前激活会话时强制展开；否则遵循折叠状态（默认未折叠）
+                const hasActiveSession = matchedSessions.some(s => s.id === currentSessionId);
+                const isCollapsed = !hasActiveSession && !!collapsedWorkspaces[wf.path];
+                const isWsActive = normalizeFsPath(activeWorkspaceDir) === normalizeFsPath(wf.path);
+
                 return (
                   <div key={wf.path} className="space-y-0.5">
-                    {/* 工作区目录头部 (可折叠、可添加新会话) */}
+                    {/* 工作区目录头部 (可折叠、可激活切换工作区、可添加新会话) */}
                     <div
-                      onClick={() => toggleWorkspaceCollapse(wf.path)}
-                      className="group flex items-center justify-between py-1 px-1.5 rounded-md hover:bg-bg-hover cursor-pointer text-text-secondary hover:text-text-primary text-xs transition-colors"
-                      title={wf.path}
+                      onClick={() => {
+                        if (isCollapsed) {
+                          toggleWorkspaceCollapse(wf.path);
+                        }
+                        if (onWorkspaceChange && normalizeFsPath(activeWorkspaceDir) !== normalizeFsPath(wf.path)) {
+                          onWorkspaceChange(wf.path);
+                        }
+                        const firstSession = matchedSessions[0];
+                        if (firstSession && firstSession.id !== currentSessionId) {
+                          onSelectSession(firstSession.id);
+                        }
+                      }}
+                      className={`group flex items-center justify-between py-1 px-1.5 rounded-md hover:bg-bg-hover cursor-pointer text-xs transition-colors ${
+                        isWsActive
+                          ? 'bg-accent/15 text-accent font-semibold shadow-xs'
+                          : 'text-text-secondary hover:text-text-primary'
+                      }`}
+                      title={`工程目录: ${wf.name}\n物理路径: ${wf.path}\n点击激活并切换至该工程`}
                     >
                       <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                        {isCollapsed ? (
-                          <ChevronRight size={12} className="text-text-muted shrink-0" />
-                        ) : (
-                          <ChevronDown size={12} className="text-text-muted shrink-0" />
-                        )}
-                        <Folder size={13} className="text-amber-400 shrink-0" />
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleWorkspaceCollapse(wf.path);
+                          }}
+                          className="p-0.5 hover:bg-bg-card rounded text-text-muted hover:text-text-primary transition-colors"
+                          title={isCollapsed ? '展开目录' : '折叠目录'}
+                        >
+                          {isCollapsed ? (
+                            <ChevronRight size={12} className="shrink-0" />
+                          ) : (
+                            <ChevronDown size={12} className="shrink-0" />
+                          )}
+                        </button>
+                        <Folder size={13} className={isWsActive ? 'text-accent shrink-0' : 'text-amber-400 shrink-0'} />
                         <span className="truncate font-medium text-[12px]">{wf.name}</span>
+                        {matchedSessions.length > 0 && (
+                          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-border/40 text-text-muted font-mono shrink-0 ml-1">
+                            {matchedSessions.length}
+                          </span>
+                        )}
+                        {isWsActive && (
+                          <span className="text-[9px] px-1 py-0.2 rounded bg-accent/20 text-accent font-mono shrink-0 ml-1">
+                            活跃
+                          </span>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
@@ -507,7 +583,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           return (
                             <div
                               key={s.id}
-                              onClick={() => !isEditing && onSelectSession(s.id)}
+                              onClick={() => {
+                                if (!isEditing) {
+                                  onSelectSession(s.id);
+                                  if (s.workspaceDir && onWorkspaceChange && normalizeFsPath(activeWorkspaceDir) !== normalizeFsPath(s.workspaceDir)) {
+                                    onWorkspaceChange(s.workspaceDir);
+                                  }
+                                }
+                              }}
                               className={`group relative flex items-center justify-between py-1 px-2 rounded-md cursor-pointer text-xs transition-all ${
                                 isActive
                                   ? 'bg-accent/15 text-accent font-medium'
@@ -597,13 +680,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                       </div>
                                       <div
                                         onClick={() => {
-                                          if (onArchiveSession) onArchiveSession(s.id);
+                                          setArchiveModalSession(s);
                                           setActiveMenuSessionId(null);
                                         }}
                                         className="flex items-center gap-2 px-3 py-1.5 hover:bg-bg-hover text-text-secondary hover:text-text-primary cursor-pointer transition-colors"
                                       >
-                                        <Archive size={12} className="text-text-muted" />
-                                        <span>{s.isArchived ? '取消归档' : '归档会话'}</span>
+                                        <Folder size={12} className="text-text-muted" />
+                                        <span>归入项目目录...</span>
                                       </div>
                                       <div className="border-t border-border my-1"></div>
                                       <div
@@ -632,13 +715,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
               {/* 2. 独立/通用会话分组 (未绑定特定工作区) */}
               {(() => {
                 const unattached = sessions.filter((s) => {
-                  const matchUnattached = !s.workspaceDir || !workspaceFolders.some((f) => f.path === s.workspaceDir);
-                  const matchArchived = showOnlyArchived ? s.isArchived : !s.isArchived;
+                  const matchUnattached = !s.workspaceDir || !workspaceFolders.some((f) => normalizeFsPath(f.path) === normalizeFsPath(s.workspaceDir));
                   const matchQuery = !sessionSearchQuery.trim() || (s.title && s.title.toLowerCase().includes(sessionSearchQuery.toLowerCase()));
-                  return matchUnattached && matchArchived && matchQuery;
+                  return matchUnattached && matchQuery;
                 });
                 if (unattached.length === 0) return null;
-                const isCollapsed = !!collapsedWorkspaces['__unattached__'];
+                const hasActiveInUnattached = unattached.some(s => s.id === currentSessionId);
+                const isCollapsed = !hasActiveInUnattached && !!collapsedWorkspaces['__unattached__'];
 
                 return (
                   <div className="space-y-0.5 pt-1">
@@ -654,6 +737,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         )}
                         <MessageSquare size={13} className="text-slate-400 shrink-0" />
                         <span className="truncate font-medium text-[12px]">通用独立对话</span>
+                        {unattached.length > 0 && (
+                          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-border/40 text-text-muted font-mono shrink-0 ml-1">
+                            {unattached.length}
+                          </span>
+                        )}
                       </div>
                       <button
                         type="button"
@@ -679,7 +767,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           return (
                             <div
                               key={s.id}
-                              onClick={() => !isEditing && onSelectSession(s.id)}
+                              onClick={() => {
+                                if (!isEditing) {
+                                  onSelectSession(s.id);
+                                  if (onWorkspaceChange && activeWorkspaceDir) {
+                                    onWorkspaceChange('');
+                                  }
+                                }
+                              }}
                               className={`group relative flex items-center justify-between py-1 px-2 rounded-md cursor-pointer text-xs transition-all ${
                                 isActive
                                   ? 'bg-accent/15 text-accent font-medium'
@@ -733,7 +828,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                           setEditingTitle(s.title || '');
                                           setActiveMenuSessionId(null);
                                         }}
-                                        className="flex items-center gap-2 px-3 py-1.5 hover:bg-bg-hover text-text-secondary hover:text-text-primary cursor-pointer"
+                                        className="flex items-center gap-2 px-3 py-1.5 hover:bg-bg-hover text-text-secondary hover:text-text-primary cursor-pointer transition-colors"
                                       >
                                         <Edit2 size={12} className="text-text-muted" />
                                         <span>重命名</span>
@@ -743,20 +838,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                           if (onForkSession) onForkSession(s.id);
                                           setActiveMenuSessionId(null);
                                         }}
-                                        className="flex items-center gap-2 px-3 py-1.5 hover:bg-bg-hover text-text-secondary hover:text-text-primary cursor-pointer"
+                                        className="flex items-center gap-2 px-3 py-1.5 hover:bg-bg-hover text-text-secondary hover:text-text-primary cursor-pointer transition-colors"
                                       >
                                         <GitFork size={12} className="text-text-muted" />
                                         <span>分叉会话</span>
                                       </div>
                                       <div
                                         onClick={() => {
-                                          if (onArchiveSession) onArchiveSession(s.id);
+                                          setArchiveModalSession(s);
                                           setActiveMenuSessionId(null);
                                         }}
-                                        className="flex items-center gap-2 px-3 py-1.5 hover:bg-bg-hover text-text-secondary hover:text-text-primary cursor-pointer"
+                                        className="flex items-center gap-2 px-3 py-1.5 hover:bg-bg-hover text-text-secondary hover:text-text-primary cursor-pointer transition-colors"
                                       >
-                                        <Archive size={12} className="text-text-muted" />
-                                        <span>{s.isArchived ? '取消归档' : '归档会话'}</span>
+                                        <Folder size={12} className="text-text-muted" />
+                                        <span>归入项目目录...</span>
                                       </div>
                                       <div className="border-t border-border my-1"></div>
                                       <div
@@ -1006,6 +1101,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
         onClose={() => setSelectedSkillForModal(null)}
         skill={selectedSkillForModal}
         onInsertPrompt={onInsertPrompt}
+      />
+
+      {/* 归档到工作区弹窗 (让用户明确选择归档到哪个工作区) */}
+      <ArchiveModal
+        isOpen={!!archiveModalSession}
+        onClose={() => setArchiveModalSession(null)}
+        session={archiveModalSession}
+        workspaceFolders={workspaceFolders}
+        onConfirm={handleConfirmArchive}
+        onSelectNewFolder={handleSelectNewFolderForArchive}
       />
     </aside>
   );

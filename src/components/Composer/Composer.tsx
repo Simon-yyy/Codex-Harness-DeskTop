@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Paperclip, ArrowUp, Sparkles, ChevronUp, X, Clock, Terminal, Zap, Shield, HelpCircle, Layers, Wrench, Globe, MessageSquare, FileEdit } from 'lucide-react';
+import { Paperclip, ArrowUp, Square, Sparkles, ChevronUp, X, Clock, Terminal, Zap, Shield, HelpCircle, Layers, Wrench, Globe, MessageSquare, FileEdit } from 'lucide-react';
 import { AttachedImage, QueuedInstruction } from '@/types/session';
 import { ModelOption } from '@/types/provider';
 import { SkillItem, PermissionMode } from '@/types/electron';
@@ -8,6 +8,7 @@ import { getSkillDisplayInfo, SKILLS_DICTIONARY } from '@/data/skillsDictionary'
 interface ComposerProps {
   onSend: (text: string, images: AttachedImage[]) => void;
   isGenerating: boolean;
+  onStopGeneration?: () => void;
   queue: QueuedInstruction[];
   onRemoveQueueItem: (id: string) => void;
   allModels: ModelOption[];
@@ -31,6 +32,7 @@ const SLASH_COMMANDS = [
 export const Composer: React.FC<ComposerProps> = ({
   onSend,
   isGenerating,
+  onStopGeneration,
   queue,
   onRemoveQueueItem,
   allModels,
@@ -558,15 +560,27 @@ export const Composer: React.FC<ComposerProps> = ({
               )}
             </div>
 
-            {/* 圆形微动效发送按钮 */}
-            <button
-              onClick={handleSend}
-              disabled={!inputPrompt.trim() && images.length === 0}
-              className="w-7 h-7 rounded-full bg-gradient-to-r from-accent to-accent-secondary hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed text-white flex items-center justify-center transition-all shadow-xs active:scale-95"
-              title="发送 (Enter)"
-            >
-              <ArrowUp size={14} />
-            </button>
+            {/* 发送 / 停止生成双模态按钮 */}
+            {isGenerating ? (
+              <button
+                type="button"
+                onClick={onStopGeneration}
+                className="w-7 h-7 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center transition-all shadow-xs active:scale-95 animate-pulse cursor-pointer"
+                title="停止生成 (随时打断)"
+              >
+                <Square size={11} className="fill-white" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleSend}
+                disabled={!inputPrompt.trim() && images.length === 0}
+                className="w-7 h-7 rounded-full bg-gradient-to-r from-accent to-accent-secondary hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed text-white flex items-center justify-center transition-all shadow-xs active:scale-95 cursor-pointer"
+                title="发送 (Enter)"
+              >
+                <ArrowUp size={14} />
+              </button>
+            )}
           </div>
         </div>
       </div>

@@ -1,6 +1,6 @@
 {
   "name": "codex-desktop",
-  "version": "1.1.2",
+  "version": "1.1.3",
   "description": "OpenAI Codex Harness Modern Desktop Client (Electron)",
   "main": "main.js",
   "author": "Simon-yyy",
@@ -14,7 +14,7 @@
     "pack": "npm run build:ui && electron-builder --dir",
     "build": "npm run build:ui && electron-builder && node scripts/release.mjs",
     "release": "node scripts/release.mjs",
-    "test": "node tests/run-all-tests.mjs && node tests/workspace-security.test.mjs"
+    "test": "node tests/run-all-tests.mjs && node tests/workspace-security.test.mjs && node tests/interaction-features.test.mjs && node scripts/check-skills.mjs"
   },
   "build": {
     "appId": "com.simon.codex.desktop",

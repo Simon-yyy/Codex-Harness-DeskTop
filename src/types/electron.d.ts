@@ -92,6 +92,18 @@ export interface ReadWorkspaceFileResult {
   permissionMode?: PermissionMode;
 }
 
+export interface WriteWorkspaceFileResult {
+  ok: boolean;
+  code?: string;
+  reason?: string;
+  hint?: string;
+  relativePath?: string;
+  fullPath?: string;
+  bytesWritten?: number;
+  backupPath?: string | null;
+  permissionMode?: PermissionMode;
+}
+
 export interface WorkspaceTreeResult {
   rootPath: string;
   rootName: string;
@@ -107,12 +119,14 @@ export interface CodexDesktopAPI {
   requestLLM: (payload: LLMRequestPayload) => Promise<LLMResponsePayload>;
   callLlmApi?: (payload: { endpoint: string; apiKey?: string; body: any; customHeaders?: Record<string, string>; timeout?: number; stream?: boolean; streamId?: string }) => Promise<{ ok: boolean; status: number; statusText: string; body: string }>;
   onLlmStreamChunk?: (callback: (data: { streamId?: string; contentDelta?: string; thinkingDelta?: string; isDone?: boolean }) => void) => () => void;
+  abortLlmStream?: (streamId: string) => Promise<{ success: boolean; notFound?: boolean }>;
   selectWorkspaceDir?: () => Promise<string | null>;
   setWorkspaceDir?: (dirPath: string) => Promise<{ ok: boolean; activeWorkspaceDir?: string | null; error?: string }>;
   readWorkspaceTree?: (dirPath?: string) => Promise<WorkspaceTreeResult | null>;
   getSecurityStatus?: () => Promise<SecurityStatus>;
   setPermissionMode?: (mode: PermissionMode) => Promise<{ ok: boolean; canceled?: boolean; error?: string; permissionMode: PermissionMode }>;
   readWorkspaceFile?: (relativePath: string) => Promise<ReadWorkspaceFileResult>;
+  writeWorkspaceFile?: (payload: { relativePath: string; content: string; createBackup?: boolean }) => Promise<WriteWorkspaceFileResult>;
   setTheme?: (theme: string) => void;
   getThemes?: () => any;
   getCurrentTheme?: () => string;

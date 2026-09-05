@@ -225,6 +225,88 @@ export function runWorkspaceSecurityTests() {
     assert.strictEqual(resRwTraversal.code, "PERMISSION_DENIED");
     process.stdout.write("  ✅ [PASS] 向量 9: workspace-readwrite 读写模式工作区严格边界守卫 (PERMISSION_DENIED)\n");
 
+    // 提取 main.js 中的 write-workspace-file 算法
+    function simulateWriteWorkspaceFile({ relativePath, content = "", createBackup = true }, authoritativeSandbox) {
+      const mode = authoritativeSandbox.permissionMode;
+      const workspace = authoritativeSandbox.activeWorkspaceDir;
+
+      if (!relativePath || typeof relativePath !== "string") {
+        return { ok: false, code: "INVALID_ARGUMENT", reason: "文件相对路径不能为空" };
+      }
+
+      if (mode === "chat-only" || mode === "workspace-readonly") {
+        return {
+          ok: false,
+          code: "PERMISSION_DENIED",
+          reason: "只读模式阻断写入"
+        };
+      }
+
+      let candidatePath = "";
+      if (mode === "workspace-readwrite") {
+        if (!workspace) {
+          return { ok: false, code: "NO_WORKSPACE", reason: "未选定工作区" };
+        }
+        candidatePath = path.resolve(workspace, relativePath);
+        try {
+          const realWorkspace = fs.realpathSync(workspace);
+          const targetDir = path.dirname(candidatePath);
+          if (!fs.existsSync(targetDir)) {
+            fs.mkdirSync(targetDir, { recursive: true });
+          }
+          const realParent = fs.realpathSync(targetDir);
+          const rel = path.relative(realWorkspace, realParent);
+          const isContained = !rel.startsWith("..") && !path.isAbsolute(rel);
+          if (!isContained) {
+            return { ok: false, code: "PERMISSION_DENIED", reason: "越权写入拦截" };
+          }
+        } catch (err) {
+          return { ok: false, code: "REALPATH_ERROR", reason: err.message };
+        }
+      } else {
+        candidatePath = workspace ? path.resolve(workspace, relativePath) : path.resolve(relativePath);
+        const parentDir = path.dirname(candidatePath);
+        if (!fs.existsSync(parentDir)) {
+          fs.mkdirSync(parentDir, { recursive: true });
+        }
+      }
+
+      let backupCreated = false;
+      if (createBackup && fs.existsSync(candidatePath)) {
+        fs.copyFileSync(candidatePath, `${candidatePath}.bak`);
+        backupCreated = true;
+      }
+      fs.writeFileSync(candidatePath, content, "utf8");
+      return { ok: true, relativePath, backupCreated };
+    }
+
+    // 测试 10: 只读模式下阻断写文件
+    const resWriteReadonly = simulateWriteWorkspaceFile({ relativePath: "index.ts", content: "modified" }, sandbox);
+    assert.strictEqual(resWriteReadonly.ok, false, "只读模式必须阻断写入");
+    assert.strictEqual(resWriteReadonly.code, "PERMISSION_DENIED");
+    process.stdout.write("  ✅ [PASS] 向量 10: workspace-readonly 只读模式阻断文件物理写入 (PERMISSION_DENIED)\n");
+
+    // 测试 11: 读写模式下越权向工作区外部穿透写入
+    const resWriteTraversal = simulateWriteWorkspaceFile({ relativePath: "../outside-secret/evil.ts", content: "evil" }, rwSandbox);
+    assert.strictEqual(resWriteTraversal.ok, false, "越权穿透写入必须拦截");
+    assert.strictEqual(resWriteTraversal.code, "PERMISSION_DENIED");
+    process.stdout.write("  ✅ [PASS] 向量 11: workspace-readwrite 越权向工作区外部穿透写入拦截 (PERMISSION_DENIED)\n");
+
+    // 测试 12: 读写模式下合法修改并自动生成 .bak 备份
+    const resWriteNormal = simulateWriteWorkspaceFile({ relativePath: "index.ts", content: "export const greeting = 'Updated!';" }, rwSandbox);
+    assert.strictEqual(resWriteNormal.ok, true, "合法文件写入应成功");
+    assert.strictEqual(resWriteNormal.backupCreated, true, "已有文件被覆盖前必须生成 .bak 备份");
+    assert.strictEqual(fs.readFileSync(legalFilePath, "utf8"), "export const greeting = 'Updated!';");
+    assert.ok(fs.existsSync(`${legalFilePath}.bak`), "必须物理存在 .bak 备份文件");
+    assert.strictEqual(fs.readFileSync(`${legalFilePath}.bak`, "utf8"), "export const greeting = 'Hello inside workspace';");
+    process.stdout.write("  ✅ [PASS] 向量 12: 工作区合法代码写入成功且自动物理保留 .bak 备份副本\n");
+
+    // 测试 13: 自动创建多层子目录并写入新文件
+    const resWriteDeep = simulateWriteWorkspaceFile({ relativePath: "deep/sub/module.ts", content: "export const deep = true;" }, rwSandbox);
+    assert.strictEqual(resWriteDeep.ok, true, "深层子目录文件写入应成功");
+    assert.strictEqual(fs.readFileSync(path.join(workspaceDir, "deep/sub/module.ts"), "utf8"), "export const deep = true;");
+    process.stdout.write("  ✅ [PASS] 向量 13: 目标深层嵌套父目录自动递归创建并成功写入\n");
+
   } finally {
     // 清理测试临时文件
     try {

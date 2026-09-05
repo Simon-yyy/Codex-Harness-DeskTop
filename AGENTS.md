@@ -51,7 +51,7 @@ codex-desktop/
 | 任务 | 命令 | 说明 |
 | :--- | :--- | :--- |
 | **启动开发** | `npm start` | 启动本地 Electron 桌面客户端进行实时调试 |
-| **全量测试** | `npm test` | 执行 16 大 Seam 边界共 57 项自动化测试 |
+| **全量测试** | `npm test` | 执行 17 大 Seam 边界共 71 项全自动化测试 |
 | **快速解包** | `npm run pack` | 打包生成解包后的应用目录 `release/win-unpacked` |
 | **构建安装包** | `npm run build` | 调用 `electron-builder` 生成 NSIS 安装包 `.exe` |
 | **归档发布** | `npm run release` | 执行 SHA-256 计算、安装包与 Release Notes 归档 |
@@ -71,3 +71,17 @@ codex-desktop/
    - Agent 处于生成/思考中时，用户输入必须通过 `queuedInstructions` 排队，当前任务结束后自动消费执行。
 4. **技能库同步**：
    - `.agents/skills/` 目录中的技能在应用就绪时自动增量热同步至用户目录 `~/.codex/skills/`。
+5. **项目目录分类与工作区强联动**：
+   - 会话一律按物理项目目录收纳展示，杜绝冷冻隐藏逻辑；
+   - 用户点击左侧任一项目下的对话时，系统活跃工作区必须无缝联动切换到对应的项目物理目录，并同步给 Electron 后端与文件树；
+   - 跨平台路径匹配一律使用 `normalizeFsPath` 进行标准化比对，消除 Windows 正反斜杠与盘符大小写差异。
+6. **真实流式遥测指标（Telemetry）**：
+   - 底部状态栏指标严禁使用静态 Mock 占位，必须打通全链路实时数据；
+   - 严格采集真实的首 Token 延迟 (TTFT)、实时流式速率 (tok/s)、真实 Usage 统计与上下文缓存命中率 (Cache Hit %)。
+7. **主进程权威安全沙箱 (Seam 17)**：
+   - 严格守卫 `chat-only`、`workspace-readonly`、`workspace-readwrite` 三大权限模式；
+   - 阻断相对路径穿透 (`../`)、绝对路径越权与软链接物理逃逸；
+   - 物理文件写回磁盘时必须自动保留同名 `.bak` 备份副本。
+8. **流式生成打断与对话撤回状态机 (Seam 18)**：
+   - 模型流式吐字中支持随时主动掐断，主进程通过 `activeLlmStreams` 映射表立即调用底层 `req.destroy()` 断开网络，杜绝多余流量与计费；
+   - 用户消息支持一键撤回该轮问答并原样回填至输入框（自动打断正在进行的生成），方便用户修正提示词后重新提交。
