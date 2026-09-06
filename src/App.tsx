@@ -84,6 +84,7 @@ export const App: React.FC = () => {
   const [skills, setSkills] = useState<SkillItem[]>([]);
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('workspace-readonly');
   const [activeWorkspaceDir, setActiveWorkspaceDir] = useState<string | null>(null);
+  const [workspaceRefreshTrigger, setWorkspaceRefreshTrigger] = useState(0);
   const activeStreamIdRef = useRef<string | null>(null);
 
   // 同步主进程权威安全沙箱状态与当前活跃会话工作区
@@ -184,8 +185,11 @@ export const App: React.FC = () => {
     });
   };
 
-  // 当代码块中的内容被安全写回磁盘时，自动拉取最新物理文件并展开右侧代码预览面板
+  // 当代码块中的内容被安全写回磁盘时，自动拉取最新物理文件、展开右侧代码预览面板，并触发左侧文件树刷新
   const handleFileWritten = async (filePath: string) => {
+    // 触发左侧文件树重新扫描，确保刚创建或修改的文件/文件夹立即出现在文件树中
+    setWorkspaceRefreshTrigger(prev => prev + 1);
+
     if (window.codexDesktop?.readWorkspaceFile) {
       try {
         const res = await window.codexDesktop.readWorkspaceFile(filePath);
@@ -375,11 +379,12 @@ export const App: React.FC = () => {
         let modeRule = '你当前处于工作区只读安全沙箱。当前环境采用【即时上下文全量注入架构】，请基于下方已提供的工作区大纲和上下文挂载文件，立即直接给出完整分析、代码诊断或推演方案。绝对严禁输出“让我读取核心文件...”等等待二次交互的中断性语句，严禁尝试发起工具调用。';
         if (permissionMode === 'workspace-readwrite') {
           modeTitle = '✍️ 工作区读写模式 (Workspace Read/Write - 自动修改工程落盘)';
-          modeRule = '【核心直写架构认知】你正运行在 Codex Desktop 工业级桌面端中，当前环境已直接授权你修改本地工程文件！客户端内置代码自动落盘引擎，只要你在代码块第一行清晰标注 `// filepath: <相对路径>`（如 `// filepath: src/App.tsx` 或 `# filepath: config.py`），客户端在生成结束时将全自动、静默直接修改并写入本地物理磁盘，并自动生成 .bak 备份副本。\n' +
-            '【绝对红线规约】绝对严禁向用户声称“我无法直接写文件”、“没有直接往磁盘写文件的通道”或“落盘必须你手动操作”，绝对严禁要求用户手动点击按钮或手动执行脚本保存文件！直接输出带 filepath 的完整代码即可，输出即代表直接落地！';
+          modeRule = '【核心直写架构认知】你正运行在 Codex Desktop 工业级桌面端中，当前环境已直接授权你修改本地工程文件！客户端内置代码与文档自动落盘引擎，只要你在代码块第一行清晰标注 `// filepath: <相对路径>`（如 `// filepath: src/App.tsx`、`# filepath: config.py`、或 Markdown 文档 `<!-- filepath: docs/架构报告.md -->`），客户端在生成结束时将全自动直接修改并写入本地物理磁盘，并联动刷新左侧文件树与抽屉。\n' +
+            '【文档与长文本产出规约】当用户要求生成文档、审查报告、设计方案、测试用例或 PRD 等长篇交付物时，为了给用户最舒适的阅读与归档体验，必须将完整文档正文包裹在带有目标文件路径的 Markdown 代码块中（如 ````markdown\n<!-- filepath: docs/DISTRIBUTION-AUDIT.md -->\n# 文档正文...\n````），而在外部对话流中仅保留 2~3 句核心要点摘要。客户端将全自动为用户将文件存入工作区对应目录，免去界面冗长刷屏与手动保存的烦恼。\n' +
+            '【绝对红线规约】绝对严禁向用户声称“我无法直接写文件”、“没有直接往磁盘写文件的通道”或“落盘必须你手动操作”，绝对严禁要求用户手动复制粘贴或保存文件！直接输出带 filepath 的完整内容即可，输出即代表直接落地！';
         } else if (permissionMode === 'full-access') {
           modeTitle = '🌐 全局受信任模式 (Full Access)';
-          modeRule = '你拥有全局代码直接修改与落地权限。客户端已打通本地磁盘自动写盘通道，所有带 `// filepath: ...` 的代码块将全自动直接写入磁盘。绝对严禁声称无法写文件，直接输出完整代码方案即可。';
+          modeRule = '你拥有全局代码与文档直接修改落盘权限。所有带 filepath 的代码或 Markdown 文档块将直接写入磁盘。涉及生成长篇报告或文档时，请包裹在指定路径的代码块中直接写入工作区。';
         }
 
         workspaceSystemPrompt = `【当前工作区工程环境与安全运行权限】\n` +
@@ -413,6 +418,9 @@ export const App: React.FC = () => {
               .replace(/(?:落盘那一下[，,]?\s*永远需要你动手[^\n]*\n?)/gi, '')
               .replace(/(?:这是环境的安全设计[，,]?\s*不是代码没写好[^\n]*\n?)/gi, '')
               .replace(/(?:你在我消息里的代码块上[，,]?\s*看得到[“"']?写入.*?这类按钮吗[^\n]*\n?)/gi, '')
+              .replace(/(?:若本轮落盘未触发[^\n]*\n?)/gi, '')
+              .replace(/(?:请将该代码块手动保存[^\n]*\n?)/gi, '')
+              .replace(/(?:请手动将[^\n]*保存到[^\n]*\n?)/gi, '')
               .trim();
           }
           if (cleanedContent) {
@@ -738,6 +746,7 @@ export const App: React.FC = () => {
           onOpenFeedback={() => setIsFeedbackOpen(true)}
           activeWorkspaceDir={activeWorkspaceDir}
           onWorkspaceChange={handleWorkspaceChange}
+          refreshTrigger={workspaceRefreshTrigger}
         />
 
         {/* 中间主工作台 */}

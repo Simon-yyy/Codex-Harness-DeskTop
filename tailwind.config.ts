@@ -33,7 +33,8 @@ export default {
         }
       },
       fontFamily: {
-        mono: ['"Cascadia Code"', 'Consolas', 'Monaco', 'monospace'],
+        sans: ['var(--font-sans)', 'system-ui', '-apple-system', '"Segoe UI"', 'Roboto', 'sans-serif'],
+        mono: ['var(--font-mono)', '"Cascadia Code"', 'Consolas', 'monospace'],
       },
       borderRadius: {
         xs: '4px',

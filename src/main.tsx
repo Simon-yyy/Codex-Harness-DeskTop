@@ -2,6 +2,10 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { App } from './App';
 import './styles/index.css';
+import { applySavedFontSettings } from './components/Modals/ThemeModal';
+
+// 初始化恢复用户个性化字体配置
+applySavedFontSettings();
 
 interface ErrorBoundaryProps {
   children: React.ReactNode;

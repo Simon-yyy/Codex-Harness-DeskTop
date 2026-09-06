@@ -34,9 +34,12 @@ codex-desktop/
 ├── .agents/skills/          # 内置 43 项全流程工业级与 Loop Engineering 技能库 (启动时自动增量部署)
 ├── scripts/
 │   ├── release.mjs          # 发版流水线：SHA-256 校验、版本产物自动归档至 release/v<version>/、发布说明生成
-│   └── upload_release.mjs   # GitHub Releases 自动化上传脚本
-├── tests/                   # 16 大 Seam 边界全自动化 TDD 测试套件
-│   ├── run-all-tests.mjs    # 主测试执行器 (57 项全量单元与集成断言)
+│   ├── upload_release.mjs   # GitHub Releases 自动化上传脚本
+│   └── check-skills.mjs     # 43 项技能结构、元数据与 YAML 合规性零依赖静态健康扫描器
+├── tests/                   # 18 大 Seam 边界全自动化 TDD 测试套件
+│   ├── run-all-tests.mjs    # 主测试执行器 (58 项核心单元与集成断言)
+│   ├── workspace-security.test.mjs # Seam 17 主进程权威安全沙箱攻击防护测试 (13 项向量断言)
+│   ├── interaction-features.test.mjs # Seam 18 流式打断与消息撤回状态机专项测试 (4 项断言)
 │   ├── renderer-behavior.test.mjs # 渲染层 VM + DOM 桩行为测试
 │   └── reply-parsing.test.mjs     # LLM 响应解析与防 HTML 误判测试
 ├── release/                 # 发布产物与安装包归档目录
@@ -51,10 +54,10 @@ codex-desktop/
 | 任务 | 命令 | 说明 |
 | :--- | :--- | :--- |
 | **启动开发** | `npm start` | 启动本地 Electron 桌面客户端进行实时调试 |
-| **全量测试** | `npm test` | 执行 17 大 Seam 边界共 71 项全自动化测试 |
+| **全量测试** | `npm test` | 执行 18 大 Seam 边界共 75 项自动化测试及全量技能静态健康扫描 |
 | **快速解包** | `npm run pack` | 打包生成解包后的应用目录 `release/win-unpacked` |
-| **构建安装包** | `npm run build` | 调用 `electron-builder` 生成 NSIS 安装包 `.exe` |
-| **归档发布** | `npm run release` | 执行 SHA-256 计算、安装包与 Release Notes 归档 |
+| **构建安装包** | `npm run build` | 调用 `electron-builder` 生成 NSIS 安装包 `.exe` 并归档发布 |
+| **归档发布** | `npm run release` | 执行 SHA-256 计算、安装包与 Release Notes 归档与旧版本自动修剪 |
 | **交付物证核验** | `python "$HOME\.local\bin\agent-verify.py"` | 检查工作区洁癖、无残留调试代码与临时文件 |
 
 ---
@@ -85,3 +88,6 @@ codex-desktop/
 8. **流式生成打断与对话撤回状态机 (Seam 18)**：
    - 模型流式吐字中支持随时主动掐断，主进程通过 `activeLlmStreams` 映射表立即调用底层 `req.destroy()` 断开网络，杜绝多余流量与计费；
    - 用户消息支持一键撤回该轮问答并原样回填至输入框（自动打断正在进行的生成），方便用户修正提示词后重新提交。
+9. **跨平台原生环境与技能健康静态扫描 (Seam 8.5)**：
+   - 所有随附执行脚本优先提供跨平台 Node.js 原生实现，严禁单向依赖特定操作系统 Shell（如 POSIX-only Bash / jq）；
+   - 新增或调整技能必须通过 `scripts/check-skills.mjs` 静态断言，强制守卫 `SKILL.md` 元数据完整性、严禁在 YAML 中使用制表符 (Tab) 缩进，且测试结果临时文件一律禁止入库。

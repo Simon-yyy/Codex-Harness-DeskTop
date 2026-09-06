@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Copy, Check, FileDown, Loader2, CheckCircle, AlertCircle, FileCode,
-  Edit3, Zap, ChevronDown, ChevronUp, Layers, CheckCheck
+  Edit3, Zap, ChevronDown, ChevronUp, Layers, CheckCheck, FileText, BookOpen
 } from 'lucide-react';
 
 interface MarkdownRendererProps {
@@ -19,17 +19,44 @@ interface DetectedCodeItem {
   code: string;
 }
 
-// 智能探测代码中包含的目标文件路径 (如 // filepath: src/App.tsx)
+// 智能探测代码中包含的目标文件路径 (支持连字符、下划线、多级路径与扩展名)
 function detectFilePath(code: string): string | null {
   const lines = code.split('\n').slice(0, 5);
   for (const raw of lines) {
     const line = raw.trim();
-    // 形式 1: // filepath: src/App.tsx 或 # path: main.py
-    const m1 = line.match(/^(?:\/\/|#|\/\*|<!--)\s*(?:filepath|file|path|文件路径|路径|目标文件|target)\s*[:=]\s*([^\s*>-]+)/i);
-    if (m1 && m1[1]) return m1[1].replace(/^[./\\]+/, '').trim();
-    // 形式 2: // src/components/Header.tsx 或 # scripts/build.mjs
-    const m2 = line.match(/^(?:\/\/|#)\s*([\w\-./\\]+\.(?:[a-zA-Z0-9]{1,10}))$/);
+    // 形式 1: // filepath: docs/DISTRIBUTION-AUDIT.md 或 <!-- filepath: src/components/App-Header.tsx -->
+    const m1 = line.match(/^(?:\/\/|#|\/\*|<!--)\s*(?:filepath|file|path|文件路径|路径|目标文件|target)\s*[:=]\s*([a-zA-Z0-9_\-./\\]+)/i);
+    if (m1 && m1[1]) {
+      const clean = m1[1].replace(/^[./\\]+/, '').trim();
+      if (clean) return clean;
+    }
+    // 形式 2: // src/components/Header.tsx 或 # scripts/build-app.mjs 或 // docs/DISTRIBUTION-AUDIT.md
+    const m2 = line.match(/^(?:\/\/|#)\s*([a-zA-Z0-9_\-./\\]+\.(?:[a-zA-Z0-9]{1,10}))$/);
     if (m2 && m2[1] && !m2[1].includes('http')) return m2[1].replace(/^[./\\]+/, '').trim();
+  }
+  return null;
+}
+
+// 智能探测长篇技术文档/审查报告标题并推导工作区落盘路径
+function detectDocumentReportInfo(content: string): { title: string; suggestedPath: string } | null {
+  if (!content || content.length < 280) return null;
+  const lines = content.split('\n');
+  for (const raw of lines.slice(0, 10)) {
+    const trimmed = raw.trim();
+    if (trimmed.startsWith('# ')) {
+      const title = trimmed.replace(/^#+\s*/, '').replace(/[*`_]/g, '').trim();
+      if (title.length >= 2) {
+        const safeFileName = title
+          .replace(/[\\/:*?"<>|]/g, '-')
+          .replace(/\s+/g, '-')
+          .replace(/-+/g, '-')
+          .trim();
+        return {
+          title,
+          suggestedPath: `docs/${safeFileName}.md`,
+        };
+      }
+    }
   }
   return null;
 }
@@ -242,7 +269,7 @@ const CodeBlock: React.FC<{
       </div>
 
       {/* 代码内容主体：等宽字体、水平自由滚动防折断 */}
-      <pre className="p-3.5 overflow-x-auto text-xs font-mono leading-relaxed text-[#e4e4e7] bg-[#18181b] select-text">
+      <pre className="p-3.5 overflow-x-auto font-mono leading-relaxed text-[#e4e4e7] bg-[#18181b] select-text">
         <code>{code}</code>
       </pre>
     </div>
@@ -420,6 +447,42 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   const autoAppliedRef = useRef(false);
   const isWritableMode = permissionMode === 'workspace-readwrite' || permissionMode === 'full-access';
 
+  // 识别长篇文档/审查报告
+  const docReport = detectedFiles.length === 0 ? detectDocumentReportInfo(content) : null;
+  const [docSaved, setDocSaved] = useState(false);
+  const [isSavingDoc, setIsSavingDoc] = useState(false);
+
+  const handleSaveDocToWorkspace = async () => {
+    if (!docReport || isSavingDoc) return;
+    if (!isWritableMode) {
+      alert('当前处于只读模式，请先在界面下方切换为【工作区读写】后再保存！');
+      return;
+    }
+    if (!window.codexDesktop?.writeWorkspaceFile) {
+      alert('当前客户端环境不支持写文件通道');
+      return;
+    }
+
+    setIsSavingDoc(true);
+    try {
+      const res = await window.codexDesktop.writeWorkspaceFile({
+        relativePath: docReport.suggestedPath,
+        content: content,
+        createBackup: true
+      });
+      if (res && res.ok) {
+        setDocSaved(true);
+        if (onFileWritten) onFileWritten(docReport.suggestedPath);
+      } else {
+        alert(res?.reason || '保存文档失败');
+      }
+    } catch (err: any) {
+      alert(err.message || '写入文档异常');
+    } finally {
+      setIsSavingDoc(false);
+    }
+  };
+
   // 3. 一键全部应用写入逻辑 (Apply All)
   const handleApplyAll = async () => {
     if (detectedFiles.length === 0 || isApplyingAll) return;
@@ -530,6 +593,81 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
 
   return (
     <div className="w-full space-y-1">
+      {/* 📑 长篇结构化审查报告 / 交付文档卡片 */}
+      {docReport && (
+        <div className="mb-3 rounded-xl border border-accent/30 bg-accent/5 overflow-hidden transition-all shadow-sm">
+          <div className="px-3.5 py-2.5 flex items-center justify-between gap-3 bg-accent/10 border-b border-accent/20">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="p-1 rounded-md bg-accent text-white flex items-center justify-center shrink-0">
+                <FileText size={13} />
+              </span>
+              <div className="flex flex-col min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-semibold text-text-primary truncate">
+                    结构化审查报告 / 交付文档
+                  </span>
+                  <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-accent/20 text-accent font-medium truncate max-w-[180px]">
+                    {docReport.suggestedPath}
+                  </span>
+                </div>
+                <span className="text-[11px] text-text-muted truncate">
+                  {docSaved
+                    ? '🎉 已成功写入工作区工程，左侧文件树与右侧全景抽屉已同步展开'
+                    : '检测到完整结构化分析报告，支持一键落盘保存到工作区并大屏阅读'}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={handleSaveDocToWorkspace}
+                disabled={isSavingDoc || docSaved}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer shadow-xs ${
+                  docSaved
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 cursor-default'
+                    : isSavingDoc
+                    ? 'bg-accent/50 text-white cursor-wait'
+                    : isWritableMode
+                    ? 'bg-accent hover:bg-accent/90 text-white shadow-md active:scale-95'
+                    : 'bg-bg-hover text-text-muted border border-border hover:text-text-primary'
+                }`}
+                title={!isWritableMode ? '需先在下方切换为【工作区读写】' : `点击直接写入: ${docReport.suggestedPath}`}
+              >
+                {isSavingDoc ? (
+                  <>
+                    <Loader2 size={12} className="animate-spin" />
+                    <span>写入中...</span>
+                  </>
+                ) : docSaved ? (
+                  <>
+                    <CheckCheck size={13} className="text-emerald-400" />
+                    <span>已存入工作区 (.md)</span>
+                  </>
+                ) : (
+                  <>
+                    <FileDown size={13} />
+                    <span>一键存为工作区文档</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (onFileWritten) onFileWritten(docReport.suggestedPath);
+                }}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium border border-border bg-bg-card hover:bg-bg-hover text-text-muted hover:text-text-primary transition-colors cursor-pointer"
+                title="在右侧宽屏抽屉中全景大屏阅读"
+              >
+                <BookOpen size={12} className="text-accent" />
+                <span>侧边全景阅读</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 🚀 Codex / Claude 风格：Agent 变更交付中心 (Change Delivery Bar) */}
       {detectedFiles.length > 0 && (
         <div className="mb-3 rounded-xl border border-accent/30 bg-accent/5 overflow-hidden transition-all shadow-sm">

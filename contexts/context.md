@@ -17,10 +17,11 @@
 - **Streaming Telemetry (真实流式遥测)**：实时监控 TTFT (首 Token 耗时)、实时吐字速率 (tok/s)、真实输入/输出 Token 统计与上下文缓存命中率 (Cache Hit %)，消除任何静态假数据。
 - **Security Sandbox (主进程安全沙箱)**：守卫 `chat-only`、`workspace-readonly`、`workspace-readwrite` 三级权限，防护目录穿透与软链接逃逸，写回代码自动保留 `.bak` 备份。
 - **Abort & Rollback (中断与撤回机制)**：模型流式生成时可物理切断网络 (`req.destroy()`)，用户提问支持一键成对撤回并原样回填至输入框重发。
+- **Cross-platform Guardrails & Skill Audit (跨平台护栏与技能扫描)**：内置零外部依赖跨平台 Git 拦截护栏与 43 项技能静态健康扫描器，守卫工程资产与操作安全。
 
 ---
 
-## 2. 核心架构与 17 大 Seam 边界
+## 2. 核心架构与 18 大 Seam 边界 (含 Seam 8.5 技能扫描)
 
 | Seam 编号 | 模块边界 | 负责文件 | 核心职责 |
 | :--- | :--- | :--- | :--- |
@@ -30,6 +31,7 @@
 | **Seam 6** | 会话持久化与归类 | `src/hooks/useSessions.ts` | 会话增删查改、首次标题自动提取、项目归类收纳与误归档自愈 |
 | **Seam 7** | 主题美学引擎 | `preload.js`, `ui/style.css` | 4 款配色 CSS 变量注入、高对比度与无缝热切换 |
 | **Seam 8** | 技能库部署 | `main.js`, `.agents/skills/` | 43 项技能双目录增量热同步、YAML Frontmatter 校验 |
+| **Seam 8.5** | 技能健康静态扫描 | `scripts/check-skills.mjs` | 43 项技能元数据非空、YAML 缩进防 Tab 与提示词语法合规断言 |
 | **Seam 9** | 多模型服务商 | `ui/app.js`, `main.js` | 多协议自适应、API Key 安全落盘与连通性测试 |
 | **Seam 10** | 原生多模态 | `preload.js`, `ui/app.js` | 剪贴板图片拦截 (Ctrl+V)、安全落盘与视觉模型直接传图 |
 | **Seam 11~11.6** | 交互辅助与解析 | `ui/app.js`, `tests/` | ESC 关闭模态框、LLM 返回 HTML 网页防误判、VM 状态机验证 |
@@ -47,6 +49,8 @@
 - 🚪 **主入口**：[main.js](file:///d:/code_files/get_files/codex-desktop/main.js)
 - 🌉 **桥接层**：[preload.js](file:///d:/code_files/get_files/codex-desktop/preload.js)
 - 🖥️ **工作台 UI**：[ui/index.html](file:///d:/code_files/get_files/codex-desktop/ui/index.html) · [ui/app.js](file:///d:/code_files/get_files/codex-desktop/ui/app.js) · [ui/style.css](file:///d:/code_files/get_files/codex-desktop/ui/style.css)
-- 🧪 **测试套件**：[tests/run-all-tests.mjs](file:///d:/code_files/get_files/codex-desktop/tests/run-all-tests.mjs)
+- 🧪 **测试套件**：[tests/run-all-tests.mjs](file:///d:/code_files/get_files/codex-desktop/tests/run-all-tests.mjs) · [tests/workspace-security.test.mjs](file:///d:/code_files/get_files/codex-desktop/tests/workspace-security.test.mjs) · [tests/interaction-features.test.mjs](file:///d:/code_files/get_files/codex-desktop/tests/interaction-features.test.mjs)
+- 🔍 **技能健康扫描器**：[scripts/check-skills.mjs](file:///d:/code_files/get_files/codex-desktop/scripts/check-skills.mjs)
+- 📋 **技能生态指南**：[.agents/skills/README.md](file:///d:/code_files/get_files/codex-desktop/.agents/skills/README.md)
 - 📦 **发版流水线**：[scripts/release.mjs](file:///d:/code_files/get_files/codex-desktop/scripts/release.mjs)
 - 📖 **智能体指南**：[AGENTS.md](file:///d:/code_files/get_files/codex-desktop/AGENTS.md)

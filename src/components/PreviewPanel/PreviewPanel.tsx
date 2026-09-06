@@ -97,7 +97,7 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
           )}
 
           {/* 源码区域 */}
-          <pre className="p-3 font-mono text-xs text-text-secondary leading-relaxed overflow-x-auto whitespace-pre-wrap bg-bg-base/60 select-text max-h-[calc(100vh-230px)]">
+          <pre className="p-3 font-mono text-text-secondary leading-relaxed overflow-x-auto whitespace-pre-wrap bg-bg-base/60 select-text max-h-[calc(100vh-230px)]">
             <code>{codeContent}</code>
           </pre>
         </div>

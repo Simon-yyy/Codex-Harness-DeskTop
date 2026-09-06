@@ -73,6 +73,7 @@ interface SidebarProps {
   onOpenFeedback?: () => void;
   activeWorkspaceDir?: string | null;
   onWorkspaceChange?: (path: string) => void;
+  refreshTrigger?: number;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -94,6 +95,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenFeedback,
   activeWorkspaceDir,
   onWorkspaceChange,
+  refreshTrigger,
 }) => {
   const [activeTab, setActiveTab] = useState<'sessions' | 'files' | 'skills'>('sessions');
   const [skills, setSkills] = useState<SkillItem[]>([]);
@@ -138,6 +140,38 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [workspaceTree, setWorkspaceTree] = useState<WorkspaceFileItem[]>([]);
   const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
+
+  // ↔️ 侧边栏自由拖拽拉伸宽度 (范围 220px ~ 600px，持久化保存)
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('codex_sidebar_width');
+      if (saved) return Math.max(220, Math.min(600, parseInt(saved, 10)));
+    } catch (e) {}
+    return 260;
+  });
+  const [isResizing, setIsResizing] = useState(false);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing) return;
+      const newWidth = Math.max(220, Math.min(600, e.clientX));
+      setSidebarWidth(newWidth);
+    };
+    const handleMouseUp = () => {
+      if (isResizing) {
+        setIsResizing(false);
+        localStorage.setItem('codex_sidebar_width', sidebarWidth.toString());
+      }
+    };
+    if (isResizing) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    }
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing, sidebarWidth]);
 
   // 监听全局点击关闭 ... 菜单
   useEffect(() => {
@@ -262,6 +296,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   }, [activeWorkspaceDir]);
 
+  // ⚡ 外部文件写盘事件联动：当触发写盘时，立即全自动重新扫描刷新文件树
+  useEffect(() => {
+    if (refreshTrigger && refreshTrigger > 0) {
+      const currentPath = activeWorkspaceDir || workspacePath;
+      if (currentPath) {
+        loadWorkspaceTree(currentPath);
+      }
+    }
+  }, [refreshTrigger]);
+
   // 选择本地任意文件夹作为工作区
   const handleSelectWorkspace = async () => {
     if (window.codexDesktop?.selectWorkspaceDir) {
@@ -363,7 +407,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   return (
-    <aside className="w-64 h-full bg-bg-sidebar border-r border-border flex flex-col flex-shrink-0 select-none">
+    <aside
+      style={{ width: `${sidebarWidth}px` }}
+      className={`relative h-full bg-bg-sidebar border-r border-border flex flex-col flex-shrink-0 select-none ${
+        isResizing ? 'cursor-col-resize select-none' : ''
+      }`}
+    >
+      {/* ↔️ 右边缘微光拖拽手柄条 */}
+      <div
+        onMouseDown={(e) => {
+          e.preventDefault();
+          setIsResizing(true);
+        }}
+        className="absolute top-0 right-0 w-2 h-full cursor-col-resize hover:bg-accent/40 active:bg-accent transition-colors z-30 group"
+        title="按住左右拖拽调节侧边栏宽度"
+      >
+        <div className="w-0.5 h-full mx-auto bg-transparent group-hover:bg-accent group-active:bg-accent transition-colors" />
+      </div>
+
       {/* 品牌 Header */}
       <div className="p-4 border-b border-border flex items-center gap-3">
         <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-accent to-accent-secondary flex items-center justify-center font-bold text-white shadow-sm">
