@@ -74,6 +74,8 @@ export const App: React.FC = () => {
     title: string;
     filePath?: string;
     codeContent: string;
+    originalContent?: string | null;
+    hasBackup?: boolean;
   } | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isThemeOpen, setIsThemeOpen] = useState(false);
@@ -159,17 +161,32 @@ export const App: React.FC = () => {
     }
   };
 
-  // 点击左侧文件树中任一文件：安全沙箱内读取源码并展开右侧预览抽屉
+  // 点击左侧文件树中任一文件：安全沙箱内读取源码与差异并展开右侧预览抽屉
   const handleSelectFile = async (item: WorkspaceFileItem) => {
     if (item.isDirectory) return;
     try {
-      if (window.codexDesktop?.readWorkspaceFile) {
+      if (window.codexDesktop?.readWorkspaceFileDiff) {
+        const diffRes = await window.codexDesktop.readWorkspaceFileDiff(item.path);
+        if (diffRes && diffRes.ok) {
+          setPreviewFile({
+            title: item.name,
+            filePath: item.path,
+            codeContent: diffRes.currentContent,
+            originalContent: diffRes.originalContent,
+            hasBackup: diffRes.hasBackup,
+          });
+          setIsPreviewOpen(true);
+          return;
+        }
+      } else if (window.codexDesktop?.readWorkspaceFile) {
         const res = await window.codexDesktop.readWorkspaceFile(item.path);
         if (res && res.content !== undefined) {
           setPreviewFile({
             title: item.name,
             filePath: item.path,
             codeContent: res.content,
+            originalContent: null,
+            hasBackup: false,
           });
           setIsPreviewOpen(true);
           return;
@@ -182,29 +199,78 @@ export const App: React.FC = () => {
       title: item.name,
       filePath: item.path,
       codeContent: `// 无法读取或内容为空: ${item.path}`,
+      originalContent: null,
+      hasBackup: false,
     });
   };
 
-  // 当代码块中的内容被安全写回磁盘时，自动拉取最新物理文件、展开右侧代码预览面板，并触发左侧文件树刷新
+  // 当代码块中的内容被安全写回磁盘时，自动拉取最新物理文件与 Diff、展开右侧代码预览面板，并触发左侧文件树刷新
   const handleFileWritten = async (filePath: string) => {
     // 触发左侧文件树重新扫描，确保刚创建或修改的文件/文件夹立即出现在文件树中
     setWorkspaceRefreshTrigger(prev => prev + 1);
+
+    const fileName = filePath.replace(/\\/g, '/').split('/').pop() || filePath;
+
+    if (window.codexDesktop?.readWorkspaceFileDiff) {
+      try {
+        const diffRes = await window.codexDesktop.readWorkspaceFileDiff(filePath);
+        if (diffRes && diffRes.ok) {
+          setPreviewFile({
+            title: fileName,
+            filePath,
+            codeContent: diffRes.currentContent,
+            originalContent: diffRes.originalContent,
+            hasBackup: diffRes.hasBackup,
+          });
+          setIsPreviewOpen(true);
+          return;
+        }
+      } catch (err) {
+        console.error('刷新已写入文件 Diff 预览失败:', err);
+      }
+    }
 
     if (window.codexDesktop?.readWorkspaceFile) {
       try {
         const res = await window.codexDesktop.readWorkspaceFile(filePath);
         if (res && res.ok && typeof res.content === 'string') {
-          const fileName = filePath.replace(/\\/g, '/').split('/').pop() || filePath;
           setPreviewFile({
             title: fileName,
             filePath,
             codeContent: res.content,
+            originalContent: null,
+            hasBackup: false,
           });
           setIsPreviewOpen(true);
         }
       } catch (err) {
         console.error('刷新已写入文件预览失败:', err);
       }
+    }
+  };
+
+  // 一键撤销 AI 变更，将文件原子回滚为修改前的 .bak 版本
+  const handleRevertFile = async (filePath: string) => {
+    if (!window.codexDesktop?.revertWorkspaceFile) return;
+    try {
+      const res = await window.codexDesktop.revertWorkspaceFile(filePath);
+      if (res && res.ok && typeof res.content === 'string') {
+        const fileName = filePath.replace(/\\/g, '/').split('/').pop() || filePath;
+        setPreviewFile({
+          title: fileName,
+          filePath,
+          codeContent: res.content,
+          originalContent: null,
+          hasBackup: false,
+        });
+        // 触发文件树刷新
+        setWorkspaceRefreshTrigger(prev => prev + 1);
+      } else {
+        alert(res?.reason || '还原文件失败');
+      }
+    } catch (err) {
+      console.error('还原文件异常:', err);
+      alert('还原失败: ' + (err as Error).message);
     }
   };
 
@@ -380,11 +446,13 @@ export const App: React.FC = () => {
         if (permissionMode === 'workspace-readwrite') {
           modeTitle = '✍️ 工作区读写模式 (Workspace Read/Write - 自动修改工程落盘)';
           modeRule = '【核心直写架构认知】你正运行在 Codex Desktop 工业级桌面端中，当前环境已直接授权你修改本地工程文件！客户端内置代码与文档自动落盘引擎，只要你在代码块第一行清晰标注 `// filepath: <相对路径>`（如 `// filepath: src/App.tsx`、`# filepath: config.py`、或 Markdown 文档 `<!-- filepath: docs/架构报告.md -->`），客户端在生成结束时将全自动直接修改并写入本地物理磁盘，并联动刷新左侧文件树与抽屉。\n' +
+            '【输出纯粹性规约】客户端界面已自动为带 filepath 的代码块呈现完整的目标文件名与落盘状态，绝对严禁在代码块外部输出“已写入工作区xxx”、“若工作区没有请手动保存为同名文件”等自我推诿的套话和废话！直接输出分析正文和带 filepath 的代码块即可。\n' +
             '【文档与长文本产出规约】当用户要求生成文档、审查报告、设计方案、测试用例或 PRD 等长篇交付物时，为了给用户最舒适的阅读与归档体验，必须将完整文档正文包裹在带有目标文件路径的 Markdown 代码块中（如 ````markdown\n<!-- filepath: docs/DISTRIBUTION-AUDIT.md -->\n# 文档正文...\n````），而在外部对话流中仅保留 2~3 句核心要点摘要。客户端将全自动为用户将文件存入工作区对应目录，免去界面冗长刷屏与手动保存的烦恼。\n' +
+            '【工程目录洁癖规约】严禁在工程根目录下随地创建临时测试或排查脚本！生成的诊断或排查脚本必须收纳在 `scripts/` 目录下（如 `scripts/diagnose-target.ps1`），技术文档必须收纳在 `docs/` 目录下，严禁污染工程根目录。\n' +
             '【绝对红线规约】绝对严禁向用户声称“我无法直接写文件”、“没有直接往磁盘写文件的通道”或“落盘必须你手动操作”，绝对严禁要求用户手动复制粘贴或保存文件！直接输出带 filepath 的完整内容即可，输出即代表直接落地！';
         } else if (permissionMode === 'full-access') {
           modeTitle = '🌐 全局受信任模式 (Full Access)';
-          modeRule = '你拥有全局代码与文档直接修改落盘权限。所有带 filepath 的代码或 Markdown 文档块将直接写入磁盘。涉及生成长篇报告或文档时，请包裹在指定路径的代码块中直接写入工作区。';
+          modeRule = '你拥有全局代码与文档直接修改落盘权限。所有带 filepath 的代码或 Markdown 文档块将直接写入磁盘。涉及生成长篇报告或文档时，请包裹在指定路径的代码块中直接写入工作区。临时脚本收纳在 scripts/，文档收纳在 docs/。严禁输出“若未落盘请手动保存”等推诿废话。';
         }
 
         workspaceSystemPrompt = `【当前工作区工程环境与安全运行权限】\n` +
@@ -421,6 +489,8 @@ export const App: React.FC = () => {
               .replace(/(?:若本轮落盘未触发[^\n]*\n?)/gi, '')
               .replace(/(?:请将该代码块手动保存[^\n]*\n?)/gi, '')
               .replace(/(?:请手动将[^\n]*保存到[^\n]*\n?)/gi, '')
+              .replace(/(?:(?:已写入工作区|已存入本地|落盘完成|代码已写入)[^\n]*?(?:若工作区没有|若未自动落盘|把下方代码块手动存为|请手动|若未触发)[^\n]*[：:]?\s*)/gi, '')
+              .replace(/(?:\(若工作区没有[^\n]*\)[：:]?\s*)/gi, '')
               .trim();
           }
           if (cleanedContent) {
@@ -819,6 +889,7 @@ export const App: React.FC = () => {
             onOpenLightbox={(src) => setLightboxImg(src)}
             permissionMode={permissionMode}
             onFileWritten={handleFileWritten}
+            onPermissionChange={handleSelectPermissionMode}
             onRevokeMessage={handleRevokeMessage}
           />
 
@@ -840,13 +911,16 @@ export const App: React.FC = () => {
           />
         </main>
 
-        {/* 右侧变更预览面板 */}
+        {/* 右侧变更预览面板 (支持源码/Diff双模式与一键还原) */}
         <PreviewPanel
           isOpen={isPreviewOpen}
           onClose={() => setIsPreviewOpen(false)}
           title={previewFile?.title}
           filePath={previewFile?.filePath}
           codeContent={previewFile?.codeContent}
+          originalContent={previewFile?.originalContent}
+          hasBackup={previewFile?.hasBackup}
+          onRevert={handleRevertFile}
           onInsertToPrompt={(text) => setInputPrompt(prev => prev ? `${prev} ${text}` : text)}
         />
       </div>

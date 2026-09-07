@@ -104,6 +104,25 @@ export interface WriteWorkspaceFileResult {
   permissionMode?: PermissionMode;
 }
 
+export interface ReadWorkspaceFileDiffResult {
+  ok: boolean;
+  code?: string;
+  reason?: string;
+  relativePath?: string;
+  hasBackup: boolean;
+  originalContent: string | null;
+  currentContent: string;
+}
+
+export interface RevertWorkspaceFileResult {
+  ok: boolean;
+  code?: string;
+  reason?: string;
+  hint?: string;
+  relativePath?: string;
+  content?: string;
+}
+
 export interface WorkspaceTreeResult {
   rootPath: string;
   rootName: string;
@@ -127,6 +146,8 @@ export interface CodexDesktopAPI {
   setPermissionMode?: (mode: PermissionMode) => Promise<{ ok: boolean; canceled?: boolean; error?: string; permissionMode: PermissionMode }>;
   readWorkspaceFile?: (relativePath: string) => Promise<ReadWorkspaceFileResult>;
   writeWorkspaceFile?: (payload: { relativePath: string; content: string; createBackup?: boolean }) => Promise<WriteWorkspaceFileResult>;
+  readWorkspaceFileDiff?: (relativePath: string) => Promise<ReadWorkspaceFileDiffResult>;
+  revertWorkspaceFile?: (relativePath: string) => Promise<RevertWorkspaceFileResult>;
   setTheme?: (theme: string) => void;
   getThemes?: () => any;
   getCurrentTheme?: () => string;

@@ -1,5 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Bot, User, ChevronDown, ChevronRight, Copy, Check, Sparkles, ArrowDown, Loader2, Undo2 } from 'lucide-react';
+import {
+  ChevronDown, ChevronRight, Copy, Check, ArrowDown, Loader2, Undo2,
+  ArrowLeftRight, ThumbsUp, ThumbsDown, RotateCcw, Sparkles
+} from 'lucide-react';
 import { ChatMessage } from '@/types/session';
 import { PermissionMode } from '@/types/electron';
 import { MarkdownRenderer } from './MarkdownRenderer';
@@ -11,6 +14,7 @@ interface ChatStreamProps {
   onOpenLightbox: (src: string) => void;
   permissionMode?: PermissionMode;
   onFileWritten?: (filePath: string) => void;
+  onPermissionChange?: (mode: PermissionMode) => void;
   onRevokeMessage?: (messageIndex: number) => void;
 }
 
@@ -21,6 +25,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
   onOpenLightbox,
   permissionMode,
   onFileWritten,
+  onPermissionChange,
   onRevokeMessage,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -31,6 +36,24 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   const [expandedThinking, setExpandedThinking] = useState<Record<number, boolean>>({});
   const [showScrollBottom, setShowScrollBottom] = useState(false);
+  const [feedbackState, setFeedbackState] = useState<Record<number, 'up' | 'down' | null>>({});
+
+  // 动态计时器：流式生成时实时累加秒数
+  const [liveElapsedSeconds, setLiveElapsedSeconds] = useState(1);
+  useEffect(() => {
+    let timer: NodeJS.Timeout | null = null;
+    if (isGenerating) {
+      setLiveElapsedSeconds(1);
+      timer = setInterval(() => {
+        setLiveElapsedSeconds(prev => prev + 1);
+      }, 1000);
+    } else {
+      if (timer) clearInterval(timer);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [isGenerating]);
 
   const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
     streamEndRef.current?.scrollIntoView({ behavior });
@@ -47,13 +70,11 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
 
   // 消息更新或生成状态切换时的自适应滚动逻辑
   useEffect(() => {
-    // 若新增了消息（例如用户刚发送或新一轮对话开启），重置用户意图锁并强制平滑置底
     if (messages.length > prevMessagesLengthRef.current) {
       userScrolledUpRef.current = false;
       setShowScrollBottom(false);
       scrollToBottom('smooth');
     } else if (!userScrolledUpRef.current) {
-      // 流式 Token 涌入时：只要用户没有手动往上翻，就平滑跟随滚动
       scrollToBottom(isGenerating ? 'smooth' : 'auto');
     }
     prevMessagesLengthRef.current = messages.length;
@@ -88,201 +109,238 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
       <div
         ref={containerRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto px-3 sm:px-6 md:px-8 py-6 space-y-6 scroll-smooth"
+        className="flex-1 overflow-y-auto px-4 sm:px-8 md:px-14 lg:px-20 py-8 space-y-7 scroll-smooth"
       >
-        <div className="w-full max-w-4xl 2xl:max-w-5xl mx-auto space-y-7">
-        {messages.length === 0 && (
-          <div className="text-center py-20 text-text-muted space-y-3">
-            <div className="w-12 h-12 rounded-2xl bg-accent/10 text-accent flex items-center justify-center mx-auto text-xl shadow-xs">
-              <Sparkles size={24} />
+        <div className="w-full max-w-3xl 2xl:max-w-4xl mx-auto space-y-8">
+          {/* 空会话欢迎屏 */}
+          {messages.length === 0 && (
+            <div className="text-center py-24 text-text-muted space-y-3.5">
+              <div className="w-12 h-12 rounded-2xl bg-accent/10 text-accent flex items-center justify-center mx-auto text-xl shadow-xs">
+                <Sparkles size={22} />
+              </div>
+              <h3 className="text-sm font-semibold text-text-primary">系统已准备就绪</h3>
+              <p className="text-xs max-w-sm mx-auto leading-relaxed text-text-muted/80">
+                输入您的编程需求，或使用 <span className="font-mono text-accent">/</span> 快捷指令与工程技能开启高效协作。
+              </p>
             </div>
-            <h3 className="text-sm font-semibold text-text-primary">准备就绪</h3>
-            <p className="text-xs max-w-sm mx-auto leading-relaxed">
-              输入您的代码任务、重构需求，或输入 <span className="font-mono text-accent">/</span> 查看快捷指令。
-            </p>
-          </div>
-        )}
+          )}
 
-        {messages.map((msg, idx) => {
-          const isUser = msg.role === 'user';
+          {/* 遍历渲染对话流 */}
+          {messages.map((msg, idx) => {
+            const isUser = msg.role === 'user';
+            const isLastMessage = idx === messages.length - 1;
 
-          if (isUser) {
-            return (
-              <div key={idx} className="flex flex-col items-end space-y-1.5 animate-fadeIn">
-                <div className="flex items-center gap-1.5 text-xs text-text-muted font-medium pr-1">
-                  <span>您</span>
-                  <div className="w-5 h-5 rounded-full bg-accent/15 text-accent flex items-center justify-center text-[10px] font-bold">
-                    <User size={11} />
+            // 检测模型跨轮变动：当本轮助手消息的模型与上一次记录不同时，渲染居中精致切换指示线
+            let modelSwitchBanner: React.ReactNode = null;
+            if (!isUser && msg.model) {
+              // 寻找更早一条助手消息的模型
+              let prevModel: string | null = null;
+              for (let i = idx - 1; i >= 0; i--) {
+                if (messages[i].role === 'assistant' && messages[i].model) {
+                  prevModel = messages[i].model!;
+                  break;
+                }
+              }
+              if (prevModel && prevModel !== msg.model) {
+                modelSwitchBanner = (
+                  <div key={`model_switch_${idx}`} className="flex items-center justify-center my-6 gap-3 select-none text-text-muted/60">
+                    <div className="h-[1px] bg-border/40 flex-1 max-w-[120px] sm:max-w-[180px]" />
+                    <div className="flex items-center gap-1.5 text-[11px] font-mono">
+                      <ArrowLeftRight size={11} className="text-text-muted/70" />
+                      <span>模型已切换 {prevModel} → {msg.model}</span>
+                    </div>
+                    <div className="h-[1px] bg-border/40 flex-1 max-w-[120px] sm:max-w-[180px]" />
                   </div>
-                </div>
+                );
+              }
+            }
 
-                {/* 用户气泡卡片：自然柔和微阴影，杜绝生硬线框 */}
-                <div className="max-w-[88%] sm:max-w-2xl bg-bg-card border border-border/70 rounded-2xl rounded-tr-xs p-4 text-xs text-text-primary shadow-xs space-y-2.5 transition-all">
-                  {msg.images && msg.images.length > 0 && (
-                    <div className="flex flex-wrap gap-2 mb-2">
-                      {msg.images.map((rawSrc, imgIdx) => {
-                        const imgSrc = formatImageSrc(rawSrc);
-                        return (
-                          <img
-                            key={imgIdx}
-                            src={imgSrc}
-                            alt="用户附件"
-                            onClick={() => onOpenLightbox(imgSrc)}
-                            onError={(e) => {
-                              (e.target as HTMLElement).style.display = 'none';
-                            }}
-                            className="max-h-[160px] max-w-[240px] object-cover rounded-xl border border-border cursor-zoom-in hover:brightness-105 transition-all shadow-2xs"
-                          />
-                        );
-                      })}
-                    </div>
-                  )}
+            // 用户提问消息气泡（右对齐、精巧圆角药丸、去冗余边框与头像，悬停微现操作）
+            if (isUser) {
+              return (
+                <div key={idx} className="group flex flex-col items-end animate-fadeIn w-full">
+                  {/* 气泡主体 */}
+                  <div className="min-w-[68px] max-w-[85%] sm:max-w-xl bg-bg-card border border-border/80 hover:border-accent/40 rounded-2xl rounded-tr-xs px-4 py-2 text-[13px] text-text-primary shadow-2xs transition-all select-text">
+                    {/* 图片附件预览 */}
+                    {msg.images && msg.images.length > 0 && (
+                      <div className="flex flex-wrap gap-2 mb-2">
+                        {msg.images.map((rawSrc, imgIdx) => {
+                          const imgSrc = formatImageSrc(rawSrc);
+                          return (
+                            <img
+                              key={imgIdx}
+                              src={imgSrc}
+                              alt="提问附件"
+                              onClick={() => onOpenLightbox(imgSrc)}
+                              onError={(e) => {
+                                (e.target as HTMLElement).style.display = 'none';
+                              }}
+                              className="max-h-[160px] max-w-[240px] object-cover rounded-xl border border-border cursor-zoom-in hover:brightness-105 transition-all shadow-2xs"
+                            />
+                          );
+                        })}
+                      </div>
+                    )}
 
-                  {/* 用户正文内容 */}
-                  {msg.content && (
-                    <div className="whitespace-pre-wrap leading-relaxed break-words text-text-primary font-normal select-text">
-                      {msg.content}
-                    </div>
-                  )}
-
-                  {/* 用户卡片底部操作栏 (时间戳 + 撤回修改 + 复制指令) */}
-                  <div className="flex items-center justify-between pt-2 border-t border-border/50 text-[11px] text-text-muted">
-                    <span>{new Date(msg.timestamp).toLocaleTimeString()}</span>
-                    <div className="flex items-center gap-1.5">
-                      {onRevokeMessage && (
-                        <button
-                          type="button"
-                          onClick={() => onRevokeMessage(idx)}
-                          className="flex items-center gap-1 px-2 py-0.5 rounded-md hover:bg-bg-hover text-text-secondary hover:text-accent transition-colors text-[11px] font-medium cursor-pointer"
-                          title="撤回该提问并回填到输入框重新编辑"
-                        >
-                          <Undo2 size={11} />
-                          <span>撤回修改</span>
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => copyToClipboard(msg.content, idx)}
-                        className="flex items-center gap-1 px-2 py-0.5 rounded-md hover:bg-bg-hover text-text-secondary hover:text-text-primary transition-colors text-[11px] font-medium cursor-pointer"
-                        title="复制我的指令"
-                      >
-                        {copiedIdx === idx ? <Check size={11} className="text-emerald-500" /> : <Copy size={11} />}
-                        <span className={copiedIdx === idx ? 'text-emerald-500 font-semibold' : ''}>
-                          {copiedIdx === idx ? '已复制' : '复制指令'}
-                        </span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            );
-          }
-
-          // Assistant 回复：彻底去盒子化，如同 Claude/Cursor 的纯净无缝画布 (Borderless Fluid Layout)
-          return (
-            <div key={idx} className="flex flex-col items-start space-y-2.5 animate-fadeIn w-full">
-              {/* Agent 头像与模型标签 */}
-              <div className="flex items-center gap-2 text-xs">
-                <div className="w-5 h-5 rounded-md bg-accent/20 text-accent flex items-center justify-center text-xs shadow-2xs">
-                  <Bot size={13} />
-                </div>
-                <span className="font-semibold text-text-primary">Codex Agent</span>
-                {msg.model && (
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-bg-card border border-border/70 text-text-muted">
-                    {msg.model}
-                  </span>
-                )}
-              </div>
-
-              {/* 沉浸式内容主体 (无外部大边框，自然流动) */}
-              <div className="w-full pl-7 pr-1 space-y-3.5">
-                {/* 极简思维链流光折叠栏 (左侧强调线 + 浅微光) */}
-                {msg.thinking && (
-                  <div className="border-l-2 border-accent/60 pl-3 py-1 bg-accent/5 rounded-r-lg transition-all">
-                    <button
-                      onClick={() => toggleThinking(idx)}
-                      className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-primary transition-colors cursor-pointer py-0.5 font-medium"
-                    >
-                      <Sparkles size={12} className="text-accent animate-pulse" />
-                      <span>思考过程分析</span>
-                      {expandedThinking[idx] ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                    </button>
-                    {expandedThinking[idx] && (
-                      <div className="mt-2 text-xs text-text-muted/90 font-mono leading-relaxed max-h-72 overflow-y-auto select-text whitespace-pre-wrap border-t border-accent/15 pt-2">
-                        {msg.thinking}
+                    {/* 用户提问文本内容 */}
+                    {msg.content && (
+                      <div className="whitespace-pre-wrap leading-relaxed break-words font-normal">
+                        {msg.content}
                       </div>
                     )}
                   </div>
-                )}
 
-                {/* 正文内容：采用对齐主流 Agent 的专业 Markdown 与代码块渲染器 */}
-                <div className="text-xs text-text-primary leading-relaxed break-words select-text">
-                  <MarkdownRenderer
-                    content={msg.content}
-                    permissionMode={permissionMode}
-                    onFileWritten={onFileWritten}
-                    isStreaming={isGenerating && idx === messages.length - 1}
-                  />
+                  {/* 悬停微操作栏 (正常文档流，杜绝 absolute 重叠与文字换行竖排) */}
+                  <div className="h-5 flex items-center justify-end gap-2 text-[10px] text-text-muted opacity-0 group-hover:opacity-100 transition-opacity select-none pt-0.5 pr-1 whitespace-nowrap">
+                    {onRevokeMessage && (
+                      <button
+                        type="button"
+                        onClick={() => onRevokeMessage(idx)}
+                        className="flex items-center gap-1 hover:text-accent transition-colors cursor-pointer"
+                        title="撤回修改该提问并回填到输入框重新编辑"
+                      >
+                        <Undo2 size={10} />
+                        <span>撤回修改</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(msg.content, idx)}
+                      className="flex items-center gap-1 hover:text-text-primary transition-colors cursor-pointer"
+                      title="复制我的提问"
+                    >
+                      {copiedIdx === idx ? <Check size={10} className="text-emerald-500" /> : <Copy size={10} />}
+                      <span>{copiedIdx === idx ? '已复制' : '复制'}</span>
+                    </button>
+                  </div>
                 </div>
+              );
+            }
 
-                {/* 底部轻量操作栏 (时间戳与复制按钮) */}
-                <div className="flex items-center gap-3 pt-1 text-[11px] text-text-muted">
-                  <span>{new Date(msg.timestamp).toLocaleTimeString()}</span>
-                  <button
-                    onClick={() => copyToClipboard(msg.content, idx)}
-                    className="flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-bg-hover text-text-secondary hover:text-text-primary transition-colors text-[11px] font-medium"
-                    title="复制回答"
-                  >
-                    {copiedIdx === idx ? <Check size={11} className="text-emerald-500" /> : <Copy size={11} />}
-                    <span className={copiedIdx === idx ? 'text-emerald-500 font-semibold' : ''}>
-                      {copiedIdx === idx ? '已复制' : '复制回答'}
+            // 助手回复（通栏纯净排版、思考/工作时间折叠栏、细分隔线、底部微图标操作区）
+            const workSeconds = (isGenerating && isLastMessage)
+              ? liveElapsedSeconds
+              : Math.max(1, Math.round((msg.thinking?.length || 120) / 45));
+
+            return (
+              <React.Fragment key={idx}>
+                {modelSwitchBanner}
+
+                <div className="flex flex-col items-start w-full animate-fadeIn space-y-2">
+                  {/* 1. 顶部思考与工作状态指示条 (对齐 "已工作 10 秒 〉" 质感) */}
+                  {(msg.thinking || (isGenerating && isLastMessage)) && (
+                    <div className="w-full pb-2 border-b border-border/40 mb-1">
+                      <button
+                        type="button"
+                        onClick={() => toggleThinking(idx)}
+                        className="inline-flex items-center gap-1 text-[12px] text-text-muted hover:text-text-primary transition-colors cursor-pointer py-0.5 select-none font-medium"
+                      >
+                        {isGenerating && isLastMessage ? (
+                          <span className="flex items-center gap-1.5 text-accent">
+                            <Loader2 size={12} className="animate-spin" />
+                            <span>正在工作 {liveElapsedSeconds} 秒</span>
+                          </span>
+                        ) : (
+                          <span>已工作 {workSeconds} 秒</span>
+                        )}
+                        {expandedThinking[idx] ? (
+                          <ChevronDown size={13} className="text-text-muted" />
+                        ) : (
+                          <ChevronRight size={13} className="text-text-muted" />
+                        )}
+                      </button>
+
+                      {/* 展开的深度思维链内容 */}
+                      {expandedThinking[idx] && msg.thinking && (
+                        <div className="mt-2 text-xs text-text-muted/80 font-mono leading-relaxed max-h-72 overflow-y-auto select-text whitespace-pre-wrap bg-bg-card/40 border border-border/30 rounded-lg p-3">
+                          {msg.thinking}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* 2. 助手正文排版（通栏无边框、行高舒展、大模型专业渲染器） */}
+                  <div className="w-full text-[13px] text-text-primary leading-[1.75] break-words select-text">
+                    <MarkdownRenderer
+                      content={msg.content}
+                      permissionMode={permissionMode}
+                      onFileWritten={onFileWritten}
+                      onPermissionChange={onPermissionChange as any}
+                      isStreaming={isGenerating && isLastMessage}
+                    />
+                  </div>
+
+                  {/* 3. 底部轻量微图标动作栏 (复制、点赞、点踩、重新生成、时间戳) */}
+                  <div className="flex items-center gap-2 pt-1 text-text-muted select-none">
+                    {/* 复制 */}
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(msg.content, idx)}
+                      className="p-1 rounded hover:bg-bg-hover text-text-muted hover:text-text-primary transition-colors cursor-pointer"
+                      title="复制完整回答"
+                    >
+                      {copiedIdx === idx ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
+                    </button>
+
+                    {/* 点赞 */}
+                    <button
+                      type="button"
+                      onClick={() => setFeedbackState(prev => ({ ...prev, [idx]: prev[idx] === 'up' ? null : 'up' }))}
+                      className={`p-1 rounded hover:bg-bg-hover transition-colors cursor-pointer ${
+                        feedbackState[idx] === 'up' ? 'text-emerald-400' : 'text-text-muted hover:text-text-primary'
+                      }`}
+                      title="赞同回答"
+                    >
+                      <ThumbsUp size={13} />
+                    </button>
+
+                    {/* 点踩 */}
+                    <button
+                      type="button"
+                      onClick={() => setFeedbackState(prev => ({ ...prev, [idx]: prev[idx] === 'down' ? null : 'down' }))}
+                      className={`p-1 rounded hover:bg-bg-hover transition-colors cursor-pointer ${
+                        feedbackState[idx] === 'down' ? 'text-rose-400' : 'text-text-muted hover:text-text-primary'
+                      }`}
+                      title="对回答不满意"
+                    >
+                      <ThumbsDown size={13} />
+                    </button>
+
+                    {/* 重新生成 / 撤回上一轮重试 */}
+                    {onRevokeMessage && idx > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => onRevokeMessage(idx - 1)}
+                        className="p-1 rounded hover:bg-bg-hover text-text-muted hover:text-text-primary transition-colors cursor-pointer"
+                        title="重新编辑上一轮提问"
+                      >
+                        <RotateCcw size={13} />
+                      </button>
+                    )}
+
+                    {/* 时间戳 */}
+                    <span className="text-[10px] text-text-muted/60 ml-1 font-mono">
+                      {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </span>
-                  </button>
+                  </div>
                 </div>
-              </div>
-            </div>
-          );
-        })}
+              </React.Fragment>
+            );
+          })}
 
-        {/* 流式思考中动画卡片 */}
-        {isGenerating && (
-          <div className="flex flex-col items-start space-y-2 animate-fadeIn pl-7">
-            <div className="flex items-center gap-2 text-xs text-text-muted font-medium">
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-accent/15 text-accent border border-accent/30 flex items-center gap-1">
-                <Loader2 size={10} className="animate-spin" />
-                <span>思考与组织中: {currentModel}</span>
-              </span>
-            </div>
-            <div className="flex items-center gap-2.5 text-xs text-text-secondary py-1">
-              <div className="flex gap-1 items-center">
-                <span className="w-1.5 h-1.5 rounded-full bg-accent animate-ping" />
-                <span className="w-1.5 h-1.5 rounded-full bg-accent/70 animate-bounce" />
-                <span className="w-1.5 h-1.5 rounded-full bg-accent/40 animate-pulse" />
-              </div>
-              <span className="text-text-muted text-[11px]">
-                正在流式生成实时回复...
-              </span>
-            </div>
-          </div>
-        )}
-
-        <div ref={streamEndRef} />
+          <div ref={streamEndRef} className="h-2" />
         </div>
       </div>
 
-      {/* 居中悬浮【回到底部】按钮：位于消息流正下方居中，永不遮挡输入框及右侧附件按钮 */}
+      {/* 浮动置底按钮 */}
       {showScrollBottom && (
-        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 pointer-events-none animate-fadeIn">
-          <button
-            type="button"
-            onClick={handleManualScrollToBottom}
-            className="pointer-events-auto px-3.5 py-1.5 bg-bg-card/95 backdrop-blur-md hover:bg-accent hover:text-white border border-border shadow-lg rounded-full text-text-secondary transition-all transform hover:scale-105 flex items-center gap-1.5 text-xs font-medium cursor-pointer active:scale-95 group"
-            title="回到底部最新消息"
-          >
-            <ArrowDown size={13} className="text-accent group-hover:text-white transition-colors" />
-            <span>回到底部</span>
-          </button>
-        </div>
+        <button
+          onClick={handleManualScrollToBottom}
+          className="absolute bottom-4 right-8 p-2.5 rounded-full bg-bg-card border border-border shadow-lg text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-all animate-bounce z-10 cursor-pointer"
+          title="滚动到底部"
+        >
+          <ArrowDown size={15} />
+        </button>
       )}
     </div>
   );

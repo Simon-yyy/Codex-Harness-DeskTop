@@ -1356,6 +1356,26 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
     }
 
     try {
+      // 防懒惰截断守卫：若原有文件存在，且拟写入代码包含未展开的占位符，严禁直接覆盖
+      if (fs.existsSync(candidatePath) && !payload?.forceOverwrite) {
+        const STUB_PATTERNS = [
+          /\/\/\s*\.{3,}\s*(?:保持不变|其余不变|其余代码|原有代码|代码不变|现有代码|existing code|rest of code|unchanged|previous code)/i,
+          /\/\*\s*\.{3,}\s*(?:保持不变|其余不变|其余代码|原有代码|代码不变|现有代码|existing code|rest of code|unchanged|previous code)\s*\*\//i,
+          /#\s*\.{3,}\s*(?:保持不变|其余不变|其余代码|原有代码|代码不变|现有代码|existing code|rest of code|unchanged|previous code)/i,
+          /\/\/\s*TODO:\s*(?:其余保持不变|其余代码不变|其余不变)/i
+        ];
+        const matchedStub = STUB_PATTERNS.find(pat => pat.test(content));
+        if (matchedStub) {
+          SecuritySandbox.logAudit("BLOCKED_STUB_OVERWRITE", candidatePath);
+          return {
+            ok: false,
+            code: "STUB_DETECTED",
+            reason: "检测到代码中包含未展开的省略占位符 (如 '// ... 保持不变')，已安全阻断覆写以保护源文件不受损坏",
+            hint: "请要求 AI 输出完整可直接运行的源码文件，或手动复制代码中的变动段落"
+          };
+        }
+      }
+
       // 自动创建 .bak 历史安全备份
       let backupPath = null;
       if (createBackup && fs.existsSync(candidatePath)) {
@@ -1384,6 +1404,138 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
         code: "WRITE_ERROR",
         reason: `写入文件失败: ${err.message}`,
         hint: "请检查该文件是否被其他编辑器或系统进程占用锁定"
+      };
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // 权威安全沙箱文件差异对比通道 (读取当前物理文件与 .bak 备份比对)
+  // ---------------------------------------------------------------------------
+  ipcMain.handle("read-workspace-file-diff", async (_event, payload) => {
+    const relativePath = typeof payload === "string" ? payload : payload?.relativePath;
+    if (!relativePath || typeof relativePath !== "string") {
+      return { ok: false, code: "INVALID_ARGUMENT", reason: "文件相对路径不能为空" };
+    }
+
+    const mode = SecuritySandbox.permissionMode;
+    const workspace = SecuritySandbox.activeWorkspaceDir;
+
+    if (mode === "chat-only") {
+      return { ok: false, code: "CHAT_ONLY_BLOCKED", reason: "纯对话模式下禁止读取工作区文件" };
+    }
+
+    let candidatePath = "";
+    if (mode === "workspace-readonly" || mode === "workspace-readwrite") {
+      if (!workspace) {
+        return { ok: false, code: "NO_WORKSPACE", reason: "当前尚未选定工作区工程目录" };
+      }
+      candidatePath = path.resolve(workspace, relativePath);
+      try {
+        const realWorkspace = fs.realpathSync(workspace);
+        const realTarget = fs.realpathSync(candidatePath);
+        const rel = path.relative(realWorkspace, realTarget);
+        if (rel.startsWith("..") || path.isAbsolute(rel)) {
+          return { ok: false, code: "PERMISSION_DENIED", reason: "越权穿透已拦截" };
+        }
+      } catch (err) {
+        // 文件若不存在
+        return { ok: false, code: "NOT_FOUND", reason: `文件不存在: ${relativePath}` };
+      }
+    } else {
+      candidatePath = workspace ? path.resolve(workspace, relativePath) : path.resolve(relativePath);
+    }
+
+    try {
+      const currentContent = fs.readFileSync(candidatePath, "utf8");
+      const backupPath = `${candidatePath}.bak`;
+      let originalContent = null;
+      let hasBackup = false;
+
+      if (fs.existsSync(backupPath)) {
+        originalContent = fs.readFileSync(backupPath, "utf8");
+        hasBackup = true;
+      }
+
+      return {
+        ok: true,
+        relativePath,
+        hasBackup,
+        originalContent,
+        currentContent
+      };
+    } catch (err) {
+      return { ok: false, code: "READ_DIFF_ERROR", reason: `读取差异失败: ${err.message}` };
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // 权威安全沙箱一键还原通道 (将 .bak 备份原子覆盖回源文件并清理备份)
+  // ---------------------------------------------------------------------------
+  ipcMain.handle("revert-workspace-file", async (_event, payload) => {
+    const relativePath = typeof payload === "string" ? payload : payload?.relativePath;
+    if (!relativePath || typeof relativePath !== "string") {
+      return { ok: false, code: "INVALID_ARGUMENT", reason: "文件相对路径不能为空" };
+    }
+
+    const mode = SecuritySandbox.permissionMode;
+    const workspace = SecuritySandbox.activeWorkspaceDir;
+
+    if (mode === "chat-only" || mode === "workspace-readonly") {
+      return {
+        ok: false,
+        code: "PERMISSION_DENIED",
+        reason: `当前运行权限为【${mode === 'chat-only' ? '纯对话模式' : '工作区只读模式'}】，严禁回滚或修改本地文件`,
+        hint: "请在输入框左侧将权限模式切换为【✍️ 工作区读写】或【🌐 全局受信任】后再执行还原"
+      };
+    }
+
+    let candidatePath = "";
+    if (mode === "workspace-readwrite") {
+      if (!workspace) {
+        return { ok: false, code: "NO_WORKSPACE", reason: "当前尚未选定工作区工程目录" };
+      }
+      candidatePath = path.resolve(workspace, relativePath);
+      try {
+        const realWorkspace = fs.realpathSync(workspace);
+        const targetDir = path.dirname(candidatePath);
+        const realParent = fs.realpathSync(targetDir);
+        const rel = path.relative(realWorkspace, realParent);
+        if (rel.startsWith("..") || path.isAbsolute(rel)) {
+          return { ok: false, code: "PERMISSION_DENIED", reason: "越权路径还原已拦截" };
+        }
+      } catch (err) {
+        return { ok: false, code: "NOT_FOUND", reason: `无法定位目标文件: ${err.message}` };
+      }
+    } else {
+      candidatePath = workspace ? path.resolve(workspace, relativePath) : path.resolve(relativePath);
+    }
+
+    const backupPath = `${candidatePath}.bak`;
+    if (!fs.existsSync(backupPath)) {
+      return {
+        ok: false,
+        code: "NO_BACKUP",
+        reason: "未找到该文件的历史备份副本 (.bak)，无法执行原子还原"
+      };
+    }
+
+    try {
+      const restoredContent = fs.readFileSync(backupPath, "utf8");
+      fs.writeFileSync(candidatePath, restoredContent, "utf8");
+      fs.unlinkSync(backupPath); // 还原后清理临时备份
+      SecuritySandbox.logAudit("REVERT_FILE_SUCCESS", candidatePath);
+
+      return {
+        ok: true,
+        relativePath,
+        content: restoredContent
+      };
+    } catch (err) {
+      SecuritySandbox.logAudit("REVERT_FILE_FAILED", candidatePath, err.message);
+      return {
+        ok: false,
+        code: "REVERT_ERROR",
+        reason: `还原文件失败: ${err.message}`
       };
     }
   });
@@ -1451,6 +1603,11 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
           }
 
           if (IGNORED.has(entry.name)) continue;
+
+          // 严格过滤临时备份、缓存与编辑器草稿文件 (如 *.bak, *.tmp, *.swp)，确保文件树与 @ 引用洁净无污染
+          if (entry.isFile() && (entry.name.endsWith(".bak") || entry.name.endsWith(".tmp") || entry.name.endsWith(".swp") || entry.name.startsWith("~"))) {
+            continue;
+          }
 
           totalItemCount++;
           const fullPath = path.join(currentPath, entry.name);

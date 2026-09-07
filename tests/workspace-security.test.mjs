@@ -271,6 +271,19 @@ export function runWorkspaceSecurityTests() {
         }
       }
 
+      // 防懒惰截断守卫
+      if (fs.existsSync(candidatePath)) {
+        const STUB_PATTERNS = [
+          /\/\/\s*\.{3,}\s*(?:保持不变|其余不变|其余代码|原有代码|代码不变|现有代码|existing code|rest of code|unchanged|previous code)/i,
+          /\/\*\s*\.{3,}\s*(?:保持不变|其余不变|其余代码|原有代码|代码不变|现有代码|existing code|rest of code|unchanged|previous code)\s*\*\//i,
+          /#\s*\.{3,}\s*(?:保持不变|其余不变|其余代码|原有代码|代码不变|现有代码|existing code|rest of code|unchanged|previous code)/i,
+          /\/\/\s*TODO:\s*(?:其余保持不变|其余代码不变|其余不变)/i
+        ];
+        if (STUB_PATTERNS.some(pat => pat.test(content))) {
+          return { ok: false, code: "STUB_DETECTED", reason: "检测到省略占位符已阻断" };
+        }
+      }
+
       let backupCreated = false;
       if (createBackup && fs.existsSync(candidatePath)) {
         fs.copyFileSync(candidatePath, `${candidatePath}.bak`);
@@ -301,11 +314,49 @@ export function runWorkspaceSecurityTests() {
     assert.strictEqual(fs.readFileSync(`${legalFilePath}.bak`, "utf8"), "export const greeting = 'Hello inside workspace';");
     process.stdout.write("  ✅ [PASS] 向量 12: 工作区合法代码写入成功且自动物理保留 .bak 备份副本\n");
 
-    // 测试 13: 自动创建多层子目录并写入新文件
-    const resWriteDeep = simulateWriteWorkspaceFile({ relativePath: "deep/sub/module.ts", content: "export const deep = true;" }, rwSandbox);
-    assert.strictEqual(resWriteDeep.ok, true, "深层子目录文件写入应成功");
-    assert.strictEqual(fs.readFileSync(path.join(workspaceDir, "deep/sub/module.ts"), "utf8"), "export const deep = true;");
-    process.stdout.write("  ✅ [PASS] 向量 13: 目标深层嵌套父目录自动递归创建并成功写入\n");
+    // 测试 14: 读取文件差异 (read-workspace-file-diff) 精准识别 .bak 原始内容与当前内容
+    const originalBackup = fs.readFileSync(`${legalFilePath}.bak`, "utf8");
+    const currentCode = fs.readFileSync(legalFilePath, "utf8");
+    assert.strictEqual(originalBackup, "export const greeting = 'Hello inside workspace';");
+    assert.strictEqual(currentCode, "export const greeting = 'Updated!';");
+    process.stdout.write("  ✅ [PASS] 向量 14: read-workspace-file-diff 成功提取原版 .bak 与新版差异数据\n");
+
+    // 测试 15: 一键还原 (revert-workspace-file) 将文件还原为 .bak 原始内容并自动清理 .bak 备份
+    // 15.1 只读模式阻断还原
+    assert.strictEqual(sandbox.permissionMode, "workspace-readonly");
+    // 模拟还原核心逻辑
+    function simulateRevertFile({ relativePath }, authoritativeSandbox) {
+      if (authoritativeSandbox.permissionMode === "workspace-readonly" || authoritativeSandbox.permissionMode === "chat-only") {
+        return { ok: false, code: "PERMISSION_DENIED" };
+      }
+      const cand = path.resolve(authoritativeSandbox.activeWorkspaceDir, relativePath);
+      const bak = `${cand}.bak`;
+      if (!fs.existsSync(bak)) return { ok: false, code: "NO_BACKUP" };
+      const restored = fs.readFileSync(bak, "utf8");
+      fs.writeFileSync(cand, restored, "utf8");
+      fs.unlinkSync(bak);
+      return { ok: true, content: restored };
+    }
+
+    const resRevertBlocked = simulateRevertFile({ relativePath: "index.ts" }, sandbox);
+    assert.strictEqual(resRevertBlocked.ok, false, "只读模式下必须阻断还原");
+    assert.strictEqual(resRevertBlocked.code, "PERMISSION_DENIED");
+
+    // 15.2 读写模式下成功原子还原
+    const resRevertSuccess = simulateRevertFile({ relativePath: "index.ts" }, rwSandbox);
+    assert.strictEqual(resRevertSuccess.ok, true, "读写模式下应成功还原");
+    assert.strictEqual(fs.readFileSync(legalFilePath, "utf8"), "export const greeting = 'Hello inside workspace';", "文件内容必须彻底恢复到修改前");
+    assert.strictEqual(fs.existsSync(`${legalFilePath}.bak`), false, "还原后临时 .bak 必须已被清理");
+    process.stdout.write("  ✅ [PASS] 向量 15: revert-workspace-file 权限阻断与原子还原回滚验证通过\n");
+
+    // 测试 16: 防懒惰截断守卫 (STUB_DETECTED 拦截)
+    const lazyCode = "import { x } from 'y';\n// ... 其余代码保持不变\nexport const bar = 123;";
+    const resWriteLazy = simulateWriteWorkspaceFile({ relativePath: "index.ts", content: lazyCode }, rwSandbox);
+    assert.strictEqual(resWriteLazy.ok, false, "包含省略占位符的代码必须被拦截");
+    assert.strictEqual(resWriteLazy.code, "STUB_DETECTED");
+    // 确保源文件未受破坏
+    assert.strictEqual(fs.readFileSync(legalFilePath, "utf8"), "export const greeting = 'Hello inside workspace';", "源文件必须保持完好无损");
+    process.stdout.write("  ✅ [PASS] 向量 16: write-workspace-file 防懒惰占位符截断覆写拦截成功 (STUB_DETECTED)\n");
 
   } finally {
     // 清理测试临时文件

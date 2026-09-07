@@ -190,6 +190,8 @@ contextBridge.exposeInMainWorld("codexDesktop", {
   setPermissionMode: (mode) => ipcRenderer.invoke("set-permission-mode", mode),
   readWorkspaceFile: (relativePath) => ipcRenderer.invoke("read-workspace-file", { relativePath }),
   writeWorkspaceFile: (payload) => ipcRenderer.invoke("write-workspace-file", payload),
+  readWorkspaceFileDiff: (relativePath) => ipcRenderer.invoke("read-workspace-file-diff", { relativePath }),
+  revertWorkspaceFile: (relativePath) => ipcRenderer.invoke("revert-workspace-file", { relativePath }),
   onThemeChange: (callback) => {
     ipcRenderer.on("theme-change", (_event, theme) => callback(theme));
   },
