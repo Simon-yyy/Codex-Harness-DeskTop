@@ -244,6 +244,41 @@ function createWindow() {
     }, 3000);
   });
 
+  // 安全自动清理脱机/网络驱动器工作区，防止卡死
+  mainWindow.webContents.on("did-finish-load", () => {
+    mainWindow.webContents.executeJavaScript(`
+      (() => {
+        try {
+          const cur = localStorage.getItem('codex_workspace_dir');
+          if (cur && (/^[yY]:/i.test(cur) || cur.includes('已解析'))) {
+            localStorage.removeItem('codex_workspace_dir');
+          }
+          const folders = localStorage.getItem('codex_workspace_folders_v1');
+          if (folders) {
+            const list = JSON.parse(folders);
+            const filtered = list.filter(f => !/^[yY]:/i.test(f.path) && !f.name.includes('已解析'));
+            localStorage.setItem('codex_workspace_folders_v1', JSON.stringify(filtered));
+          }
+          const sessions = localStorage.getItem('codex_sessions_v2');
+          if (sessions) {
+            const sList = JSON.parse(sessions);
+            let changed = false;
+            sList.forEach(s => {
+              if (s.workspaceDir && (/^[yY]:/i.test(s.workspaceDir) || (s.workspaceName && s.workspaceName.includes('已解析')))) {
+                s.workspaceDir = '';
+                s.workspaceName = '';
+                changed = true;
+              }
+            });
+            if (changed) {
+              localStorage.setItem('codex_sessions_v2', JSON.stringify(sList));
+            }
+          }
+        } catch (e) {}
+      })();
+    `).catch(() => {});
+  });
+
   // 处理外部链接，防止在应用内跳出
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("http://") || url.startsWith("https://")) {
@@ -1542,116 +1577,190 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
 
   // ---------------------------------------------------------------------------
   // ---------------------------------------------------------------------------
-  // 工业级工作区工程文件树读取 (3000项容量 + 10层深度 + 软链接防环 + 智能白名单)
+  // 工业级工作区工程文件树读取 (主流 IDE 对齐：按需懒加载 + 缓存排除 + 智能防饿死)
   // ---------------------------------------------------------------------------
-  ipcMain.handle("read-workspace-tree", async (_event, dirPath) => {
-    const targetDir = (typeof dirPath === "string" && dirPath) ? dirPath : SecuritySandbox.activeWorkspaceDir;
-    if (!targetDir || typeof targetDir !== "string") return null;
-    try {
-      if (!fs.existsSync(targetDir)) return null;
-      const realTarget = fs.realpathSync(targetDir);
+  const WORKSPACE_IGNORED_DIRS = new Set([
+    "node_modules", ".git", ".svn", ".hg", "dist", "build", ".cache",
+    "release", "coverage", ".next", ".nuxt", ".vite", "out", "tmp", "temp",
+    ".turbo", ".electron", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+    "npm-cache", ".npm", "m2-repo", ".m2", "jdk", "jre", "maven", "gradle", ".gradle",
+    "target", "vendor", "bin", "obj", ".cargo", ".rustup"
+  ]);
 
-      // 仅精准排除巨型第三方依赖包与本地中间缓存
-      const IGNORED = new Set([
-        "node_modules", ".git", ".svn", ".hg", "dist", "build", ".cache",
-        "release", "coverage", ".next", ".nuxt", ".vite", "out", "tmp", "temp",
-        ".turbo", ".electron", "package-lock.json", "yarn.lock", "pnpm-lock.yaml"
-      ]);
+  const WORKSPACE_ALLOWED_DOT_NAMES = new Set([
+    ".agents", ".github", ".vscode", ".env", ".gitignore", ".npmrc",
+    ".editorconfig", ".prettierrc", ".eslintrc", ".commitlintrc", ".husky"
+  ]);
 
-      // 显式允许的合法项目工程与配置目录/文件
-      const ALLOWED_DOT_NAMES = new Set([
-        ".agents", ".github", ".vscode", ".env", ".gitignore", ".npmrc",
-        ".editorconfig", ".prettierrc", ".eslintrc", ".commitlintrc", ".husky"
-      ]);
+  function isWorkspaceEntryValid(name, isFile = false) {
+    if (name.startsWith(".")) {
+      const isAllowed = WORKSPACE_ALLOWED_DOT_NAMES.has(name) ||
+                        name.startsWith(".env.") ||
+                        name.endsWith(".json") ||
+                        name.endsWith(".js") ||
+                        name.endsWith(".ts") ||
+                        name.endsWith(".yml") ||
+                        name.endsWith(".yaml");
+      if (!isAllowed) return false;
+    }
+    if (WORKSPACE_IGNORED_DIRS.has(name)) return false;
+    if (isFile && (name.endsWith(".bak") || name.endsWith(".tmp") || name.endsWith(".swp") || name.startsWith("~"))) {
+      return false;
+    }
+    return true;
+  }
 
-      let totalItemCount = 0;
-      const MAX_TOTAL_ITEMS = 3000; // 放宽至 3000 项，满足绝大多数工业级项目
-      const MAX_DEPTH = 10;         // 深度放宽至 10 层，彻底解决深层目录空白问题
-      const visitedRealPaths = new Set([realTarget]);
+  // 辅助函数：超时 Promise 封装 (杜绝主进程死锁与网络盘卡死)
+  function withTimeout(promise, ms = 2500, fallbackVal = null) {
+    let timer;
+    const timeoutPromise = new Promise((resolve) => {
+      timer = setTimeout(() => resolve(fallbackVal), ms);
+    });
+    return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer));
+  }
 
-      function buildTree(currentPath, depth = 0) {
-        if (depth > MAX_DEPTH || totalItemCount >= MAX_TOTAL_ITEMS) return [];
-        let entries = [];
+  // 1. 读取指定单个目录的直接子项 (纯异步非阻塞 + 2.5秒超时熔断)
+  ipcMain.handle("read-directory-children", async (_event, folderPath) => {
+    if (!folderPath || typeof folderPath !== "string") return [];
+    return withTimeout(
+      (async () => {
         try {
-          entries = fs.readdirSync(currentPath, { withFileTypes: true });
-        } catch (e) {
+          const rootDir = SecuritySandbox.activeWorkspaceDir || folderPath;
+          const entries = await fs.promises.readdir(folderPath, { withFileTypes: true });
+          const items = [];
+
+          entries.sort((a, b) => {
+            if (a.isDirectory() === b.isDirectory()) {
+              return a.name.localeCompare(b.name);
+            }
+            return a.isDirectory() ? -1 : 1;
+          });
+
+          for (const entry of entries) {
+            if (!isWorkspaceEntryValid(entry.name, entry.isFile())) continue;
+            const fullPath = path.join(folderPath, entry.name);
+            const relativePath = path.relative(rootDir, fullPath).replace(/\\/g, "/");
+            items.push({
+              name: entry.name,
+              path: relativePath,
+              fullPath,
+              isDirectory: entry.isDirectory(),
+              children: entry.isDirectory() ? [] : undefined
+            });
+          }
+          return items;
+        } catch (err) {
+          console.error("[main] read-directory-children 异常:", err.message);
           return [];
         }
+      })(),
+      2500,
+      []
+    );
+  });
 
-        const items = [];
+  // 2. 初始工作区文件树构建 (纯异步非阻塞 + 2.5秒强力超时熔断 + 仅读直接首层)
+  ipcMain.handle("read-workspace-tree", async (_event, dirPath, options = {}) => {
+    const targetDir = (typeof dirPath === "string" && dirPath) ? dirPath : SecuritySandbox.activeWorkspaceDir;
+    if (!targetDir || typeof targetDir !== "string") return null;
 
-        entries.sort((a, b) => {
-          if (a.isDirectory() === b.isDirectory()) {
-            return a.name.localeCompare(b.name);
-          }
-          return a.isDirectory() ? -1 : 1;
-        });
-
-        for (const entry of entries) {
-          if (totalItemCount >= MAX_TOTAL_ITEMS) break;
-
-          // 过滤无意义的系统临时隐藏文件，但放行开发常用的 .agents, .github, .env 等工程配置
-          if (entry.name.startsWith(".")) {
-            const isAllowed = ALLOWED_DOT_NAMES.has(entry.name) ||
-                              entry.name.startsWith(".env.") ||
-                              entry.name.endsWith(".json") ||
-                              entry.name.endsWith(".js") ||
-                              entry.name.endsWith(".ts") ||
-                              entry.name.endsWith(".yml") ||
-                              entry.name.endsWith(".yaml");
-            if (!isAllowed) continue;
+    return withTimeout(
+      (async () => {
+        try {
+          let realTarget = targetDir;
+          try {
+            realTarget = await fs.promises.realpath(targetDir);
+          } catch (e) {
+            realTarget = path.resolve(targetDir);
           }
 
-          if (IGNORED.has(entry.name)) continue;
+          let totalItemCount = 0;
+          const MAX_TOTAL_ITEMS = 3000;
+          const MAX_DEPTH = typeof options.maxDepth === "number" ? options.maxDepth : 1; // 默认首层秒开，深层按需动态展开
+          const visitedRealPaths = new Set([realTarget]);
 
-          // 严格过滤临时备份、缓存与编辑器草稿文件 (如 *.bak, *.tmp, *.swp)，确保文件树与 @ 引用洁净无污染
-          if (entry.isFile() && (entry.name.endsWith(".bak") || entry.name.endsWith(".tmp") || entry.name.endsWith(".swp") || entry.name.startsWith("~"))) {
-            continue;
-          }
-
-          totalItemCount++;
-          const fullPath = path.join(currentPath, entry.name);
-          const relativePath = path.relative(realTarget, fullPath).replace(/\\/g, "/");
-
-          if (entry.isDirectory()) {
-            // 防软链接死循环
+          async function buildTreeAsync(currentPath, depth = 0) {
+            if (depth > MAX_DEPTH) return [];
+            let rawEntries = [];
             try {
-              const realFolder = fs.realpathSync(fullPath);
-              if (visitedRealPaths.has(realFolder)) continue;
-              visitedRealPaths.add(realFolder);
-            } catch (e) {}
+              rawEntries = await fs.promises.readdir(currentPath, { withFileTypes: true });
+            } catch (e) {
+              return [];
+            }
 
-            items.push({
-              name: entry.name,
-              path: relativePath,
-              fullPath,
-              isDirectory: true,
-              children: buildTree(fullPath, depth + 1)
+            const validEntries = rawEntries.filter(entry => isWorkspaceEntryValid(entry.name, entry.isFile()));
+            validEntries.sort((a, b) => {
+              if (a.isDirectory() === b.isDirectory()) {
+                return a.name.localeCompare(b.name);
+              }
+              return a.isDirectory() ? -1 : 1;
             });
-          } else if (entry.isFile()) {
-            items.push({
-              name: entry.name,
-              path: relativePath,
-              fullPath,
-              isDirectory: false
-            });
+
+            const currentLevelNodes = [];
+            const dirNodesToRecurse = [];
+
+            for (const entry of validEntries) {
+              totalItemCount++;
+              const fullPath = path.join(currentPath, entry.name);
+              const relativePath = path.relative(realTarget, fullPath).replace(/\\/g, "/");
+
+              if (entry.isDirectory()) {
+                const node = {
+                  name: entry.name,
+                  path: relativePath,
+                  fullPath,
+                  isDirectory: true,
+                  children: []
+                };
+                currentLevelNodes.push(node);
+                dirNodesToRecurse.push({ node, fullPath });
+              } else if (entry.isFile()) {
+                currentLevelNodes.push({
+                  name: entry.name,
+                  path: relativePath,
+                  fullPath,
+                  isDirectory: false
+                });
+              }
+            }
+
+            for (const { node, fullPath } of dirNodesToRecurse) {
+              if (depth + 1 <= MAX_DEPTH && totalItemCount < MAX_TOTAL_ITEMS) {
+                try {
+                  const realFolder = await fs.promises.realpath(fullPath);
+                  if (!visitedRealPaths.has(realFolder)) {
+                    visitedRealPaths.add(realFolder);
+                    node.children = await buildTreeAsync(fullPath, depth + 1);
+                  }
+                } catch (e) {}
+              }
+            }
+
+            return currentLevelNodes;
           }
+
+          const tree = await buildTreeAsync(realTarget, 0);
+
+          return {
+            rootPath: realTarget,
+            rootName: path.basename(realTarget),
+            tree,
+            totalCount: totalItemCount,
+            isTruncated: totalItemCount >= MAX_TOTAL_ITEMS
+          };
+        } catch (err) {
+          return { error: err.message };
         }
-        return items;
+      })(),
+      2500,
+      {
+        rootPath: targetDir,
+        rootName: path.basename(targetDir),
+        tree: [],
+        totalCount: 0,
+        isTimeout: true
       }
-
-      const tree = buildTree(realTarget, 0);
-
-      return {
-        rootPath: realTarget,
-        rootName: path.basename(realTarget),
-        tree,
-        totalCount: totalItemCount,
-        isTruncated: totalItemCount >= MAX_TOTAL_ITEMS
-      };
-    } catch (err) {
-      return { error: err.message };
-    }
+    );
   });
 
 app.whenReady().then(() => {

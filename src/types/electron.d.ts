@@ -141,7 +141,8 @@ export interface CodexDesktopAPI {
   abortLlmStream?: (streamId: string) => Promise<{ success: boolean; notFound?: boolean }>;
   selectWorkspaceDir?: () => Promise<string | null>;
   setWorkspaceDir?: (dirPath: string) => Promise<{ ok: boolean; activeWorkspaceDir?: string | null; error?: string }>;
-  readWorkspaceTree?: (dirPath?: string) => Promise<WorkspaceTreeResult | null>;
+  readWorkspaceTree?: (dirPath?: string, options?: { maxDepth?: number }) => Promise<WorkspaceTreeResult | null>;
+  readDirectoryChildren?: (folderPath: string) => Promise<WorkspaceFileItem[]>;
   getSecurityStatus?: () => Promise<SecurityStatus>;
   setPermissionMode?: (mode: PermissionMode) => Promise<{ ok: boolean; canceled?: boolean; error?: string; permissionMode: PermissionMode }>;
   readWorkspaceFile?: (relativePath: string) => Promise<ReadWorkspaceFileResult>;

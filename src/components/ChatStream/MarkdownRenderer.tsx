@@ -1,5 +1,8 @@
-import React, { useState } from 'react';
-import { Copy, Check } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  Copy, Check, FileDown, CheckCheck, Loader2,
+  FileCode, FileText
+} from 'lucide-react';
 
 interface MarkdownRendererProps {
   content: string;
@@ -29,12 +32,31 @@ function formatLang(lang: string): string {
   return lang.charAt(0).toUpperCase() + lang.slice(1);
 }
 
-// 纯净极简代码块组件 (对齐 Claude/Cursor 主流标准：仅极淡语言名 + 复制图标)
+// 从代码块首行嗅探目标文件相对路径
+function extractFilePath(code: string): { filePath: string | null; cleanCode: string } {
+  const lines = code.split('\n');
+  if (lines.length === 0) return { filePath: null, cleanCode: code };
+  const firstLine = lines[0].trim();
+  const match = firstLine.match(/^(?:\/\/|#|<!--|--|;|\/\*)\s*(?:filepath|file|path):\s*([^\s*>-]+)(?:\s*(?:-->|\*\/))?$/i);
+  if (match && match[1]) {
+    const filePath = match[1].trim().replace(/^[./\\]+/, '');
+    const cleanCode = lines.slice(1).join('\n');
+    return { filePath, cleanCode };
+  }
+  return { filePath: null, cleanCode: code };
+}
+
+// 纯净极简代码块组件 (对齐 Cursor/VS Code 工业标准：文件名标签、极简微标状态与复制)
 const CodeBlock: React.FC<{
   language: string;
   code: string;
-}> = ({ language, code }) => {
+  targetFilePath?: string | null;
+  onApplySingle?: (filePath: string, content: string) => Promise<void>;
+  isApplied?: boolean;
+  isWritableMode?: boolean;
+}> = ({ language, code, targetFilePath, onApplySingle, isApplied, isWritableMode }) => {
   const [copied, setCopied] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(code);
@@ -42,22 +64,71 @@ const CodeBlock: React.FC<{
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleSave = async () => {
+    if (!targetFilePath || !onApplySingle) return;
+    setIsSaving(true);
+    try {
+      await onApplySingle(targetFilePath, code);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <div className="my-3 rounded-xl overflow-hidden border border-border/70 bg-[var(--code-bg,#1c1c1d)] shadow-2xs transition-all">
-      {/* 顶部极简信息栏 */}
+      {/* 顶部信息栏与快速写盘操作 */}
       <div className="flex items-center justify-between px-3.5 py-1.5 bg-bg-sidebar/50 border-b border-border/40 text-[11px] select-none">
-        <span className="font-mono text-[11px] text-text-muted/80">{formatLang(language)}</span>
-        <button
-          type="button"
-          onClick={handleCopy}
-          className="flex items-center gap-1 p-1 rounded hover:bg-bg-hover text-text-muted hover:text-text-primary transition-colors cursor-pointer"
-          title="复制代码内容"
-        >
-          {copied ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
-          <span className={`text-[10px] ${copied ? 'text-emerald-400 font-medium' : ''}`}>
-            {copied ? '已复制' : ''}
-          </span>
-        </button>
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="font-mono text-[11px] text-text-muted/80">{formatLang(language)}</span>
+          {targetFilePath && (
+            <span
+              className="flex items-center gap-1 font-mono text-[10.5px] px-1.5 py-0.2 rounded bg-accent/10 text-accent border border-accent/20 truncate max-w-[200px] sm:max-w-xs"
+              title={`目标落地文件: ${targetFilePath}`}
+            >
+              <FileCode size={11} className="shrink-0" />
+              <span className="truncate">{targetFilePath}</span>
+            </span>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
+          {/* 单文件落盘微标或轻量写入按钮 */}
+          {targetFilePath && onApplySingle && (
+            isApplied ? (
+              <span
+                className="flex items-center gap-1 font-mono text-[10.5px] text-emerald-500 dark:text-emerald-400 font-medium px-1.5 py-0.5"
+                title="已安全落盘到工作区 (.bak 已自动备份)"
+              >
+                <CheckCheck size={12} className="text-emerald-500 dark:text-emerald-400" />
+                <span>已写入</span>
+              </span>
+            ) : isWritableMode ? (
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={isSaving}
+                className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer border bg-accent/15 hover:bg-accent text-accent hover:text-white border-accent/30"
+                title={`一键写入本地: ${targetFilePath}`}
+              >
+                {isSaving ? <Loader2 size={11} className="animate-spin" /> : <FileDown size={11} />}
+                <span>{isSaving ? '写入中...' : '写入'}</span>
+              </button>
+            ) : null
+          )}
+
+          {/* 复制按钮 */}
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="flex items-center gap-1 p-1 rounded hover:bg-bg-hover text-text-muted hover:text-text-primary transition-colors cursor-pointer"
+            title="复制代码内容"
+          >
+            {copied ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+            <span className={`text-[10px] ${copied ? 'text-emerald-400 font-medium' : ''}`}>
+              {copied ? '已复制' : ''}
+            </span>
+          </button>
+        </div>
       </div>
 
       {/* 代码内容主体 */}
@@ -315,16 +386,39 @@ function renderParagraphBlock(text: string, blockKey: string | number): React.Re
 
 export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   content,
+  permissionMode = 'workspace-readonly',
+  workspaceDir,
+  onFileWritten,
+  onPermissionChange,
+  isStreaming = false
 }) => {
   if (!content) return null;
 
-  // 过滤推诿套话
+  // 是否处于可写权限模式
+  const isWritableMode = permissionMode === 'workspace-readwrite' || permissionMode === 'full-access';
+
+  // 自动写盘开关（默认开启）
+  const [autoApplyEnabled, setAutoApplyEnabled] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('codex_auto_apply_files');
+      return saved !== 'false';
+    } catch {
+      return true;
+    }
+  });
+
+  const [appliedPaths, setAppliedPaths] = useState<Set<string>>(new Set());
+  const autoAppliedRef = useRef<Set<string>>(new Set());
+  const wasStreamingRef = useRef<boolean>(isStreaming);
+
+  // 过滤大模型推诿套话
   const effectiveContent = content
     .replace(/(?:(?:已写入工作区|已存入本地|落盘完成|代码已写入)[^\n]*?(?:若工作区没有|若未自动落盘|把下方代码块手动存为|请手动|若未触发)[^\n]*[：:]?\s*)/gi, '')
     .replace(/(?:若本轮落盘未触发[^\n]*\n?)/gi, '')
     .replace(/(?:请将该代码块手动保存[^\n]*\n?)/gi, '');
 
   const blocks: React.ReactNode[] = [];
+  const detectedFiles: { filePath: string; code: string }[] = [];
   let lastIndex = 0;
   let match: RegExpExecArray | null;
   const renderRegex = /```([^\r\n]*)\r?\n([\s\S]*?)(?:```|$)/g;
@@ -337,13 +431,23 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
 
     const rawHeader = match[1] || '';
     const language = rawHeader.trim().split(/\s+/)[0] || '';
-    const code = match[2] ? match[2].replace(/\n$/, '') : '';
+    const rawCode = match[2] ? match[2].replace(/\n$/, '') : '';
+
+    // 嗅探目标文件路径
+    const { filePath, cleanCode } = extractFilePath(rawCode);
+    if (filePath) {
+      detectedFiles.push({ filePath, code: cleanCode });
+    }
 
     blocks.push(
       <CodeBlock
         key={`code_${match.index}`}
         language={language}
-        code={code}
+        code={cleanCode}
+        targetFilePath={filePath}
+        onApplySingle={handleApplySingle}
+        isApplied={filePath ? appliedPaths.has(filePath) : false}
+        isWritableMode={isWritableMode}
       />
     );
 
@@ -354,6 +458,59 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   if (remainingText) {
     blocks.push(renderParagraphBlock(remainingText, `text_${lastIndex}`));
   }
+
+  // 单文件落盘执行逻辑
+  async function handleApplySingle(filePath: string, fileContent: string) {
+    if (!isWritableMode) {
+      if (onPermissionChange) onPermissionChange('workspace-readwrite');
+      return;
+    }
+    try {
+      if (window.codexDesktop?.writeWorkspaceFile) {
+        const res = await window.codexDesktop.writeWorkspaceFile({
+          relativePath: filePath,
+          content: fileContent,
+          createBackup: true
+        });
+        if (res && res.ok) {
+          setAppliedPaths(prev => new Set(prev).add(filePath));
+          autoAppliedRef.current.add(filePath);
+          if (onFileWritten) onFileWritten(filePath);
+        }
+      }
+    } catch (e) {
+      console.error('写入文件失败:', e);
+    }
+  }
+
+  // 自动落盘流水线：严格仅在真正流式生成刚刚结束（由 true 变为 false）且处于读写模式时自动落盘并通知文件树
+  useEffect(() => {
+    const justFinishedStreaming = wasStreamingRef.current && !isStreaming;
+    wasStreamingRef.current = isStreaming;
+
+    if (justFinishedStreaming && isWritableMode && autoApplyEnabled && detectedFiles.length > 0) {
+      detectedFiles.forEach(async (f) => {
+        if (!autoAppliedRef.current.has(f.filePath)) {
+          autoAppliedRef.current.add(f.filePath);
+          try {
+            if (window.codexDesktop?.writeWorkspaceFile) {
+              const res = await window.codexDesktop.writeWorkspaceFile({
+                relativePath: f.filePath,
+                content: f.code,
+                createBackup: true
+              });
+              if (res && res.ok) {
+                setAppliedPaths(prev => new Set(prev).add(f.filePath));
+                if (onFileWritten) onFileWritten(f.filePath);
+              }
+            }
+          } catch (e) {
+            console.error('自动写盘异常:', f.filePath, e);
+          }
+        }
+      });
+    }
+  }, [isStreaming, isWritableMode, autoApplyEnabled, detectedFiles, onFileWritten]);
 
   return (
     <div className="w-full space-y-1.5">

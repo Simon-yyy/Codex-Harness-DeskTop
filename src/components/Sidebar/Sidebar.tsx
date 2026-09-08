@@ -119,10 +119,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       const saved = localStorage.getItem('codex_workspace_folders_v1');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const valid = parsed.filter(f => !/^[yY]:/i.test(f.path) && !f.name.includes('已解析'));
+          localStorage.setItem('codex_workspace_folders_v1', JSON.stringify(valid));
+          return valid;
+        }
       }
     } catch (e) {}
-    if (activeWorkspaceDir) {
+    if (activeWorkspaceDir && !/^[yY]:/i.test(activeWorkspaceDir) && !activeWorkspaceDir.includes('已解析')) {
       const name = activeWorkspaceDir.replace(/[\\/]$/, '').split(/[\\/]/).pop() || '当前工程';
       return [{ id: activeWorkspaceDir, path: activeWorkspaceDir, name }];
     }
@@ -134,12 +138,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   // 工作区状态
   const [workspacePath, setWorkspacePath] = useState<string>(() => {
-    return activeWorkspaceDir || localStorage.getItem('codex_workspace_dir') || '';
+    const raw = activeWorkspaceDir || localStorage.getItem('codex_workspace_dir') || '';
+    if (/^[yY]:/i.test(raw) || raw.includes('已解析')) {
+      localStorage.removeItem('codex_workspace_dir');
+      return '';
+    }
+    return raw;
   });
   const [workspaceName, setWorkspaceName] = useState<string>('');
   const [workspaceTree, setWorkspaceTree] = useState<WorkspaceFileItem[]>([]);
   const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(false);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
+  const [folderChildrenMap, setFolderChildrenMap] = useState<Record<string, WorkspaceFileItem[]>>({});
+  const [loadingFolders, setLoadingFolders] = useState<Record<string, boolean>>({});
 
   // ↔️ 侧边栏自由拖拽拉伸宽度 (范围 220px ~ 600px，持久化保存)
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
@@ -250,6 +262,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
+  // 彻底从左侧移除指定工作区
+  const handleRemoveWorkspaceFolder = (folderPath: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setWorkspaceFolders(prev => {
+      const updated = prev.filter(f => f.path !== folderPath);
+      localStorage.setItem('codex_workspace_folders_v1', JSON.stringify(updated));
+      return updated;
+    });
+    if (workspacePath === folderPath) {
+      setWorkspacePath('');
+      setWorkspaceTree([]);
+      setWorkspaceName('');
+      localStorage.removeItem('codex_workspace_dir');
+    }
+  };
+
   const toggleWorkspaceCollapse = (key: string) => {
     setCollapsedWorkspaces(prev => ({ ...prev, [key]: !prev[key] }));
   };
@@ -264,18 +292,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   // 挂载或工作区路径变化时加载真实工程文件树
   const loadWorkspaceTree = async (dirPath: string) => {
-    if (!dirPath || !window.codexDesktop?.readWorkspaceTree) return;
+    if (!dirPath || /^[yY]:/i.test(dirPath) || dirPath.includes('已解析') || !window.codexDesktop?.readWorkspaceTree) {
+      setWorkspaceTree([]);
+      setWorkspaceName('');
+      setWorkspaceError(null);
+      return;
+    }
     setIsLoadingWorkspace(true);
+    setWorkspaceError(null);
+    setFolderChildrenMap({});
     try {
-      const res = await window.codexDesktop.readWorkspaceTree(dirPath);
-      if (res && res.tree) {
+      const res = await window.codexDesktop.readWorkspaceTree(dirPath, { maxDepth: 1 });
+      if (res && (res as any).isTimeout) {
+        setWorkspaceError('读取工作区响应超时（外部网络驱动器可能脱机），可点击上方刷新重试');
+      } else if (res && res.tree) {
         setWorkspaceTree(res.tree);
         setWorkspaceName(res.rootName || '工作区');
       } else if (res && res.error) {
-        console.error('加载工作区失败:', res.error);
+        setWorkspaceError(`加载工作区失败: ${res.error}`);
       }
-    } catch (err) {
-      console.error('读取工作区异常:', err);
+    } catch (err: any) {
+      setWorkspaceError(`读取异常: ${err?.message || '未知错误'}`);
     } finally {
       setIsLoadingWorkspace(false);
     }
@@ -319,8 +356,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  const toggleFolder = (folderKey: string) => {
-    setExpandedFolders(prev => ({ ...prev, [folderKey]: !prev[folderKey] }));
+  // 点击切换文件夹展开/折叠，并支持异步按需加载（对齐 VS Code / Cursor 懒加载机制）
+  const toggleFolder = async (folderFullPath: string) => {
+    const nextState = !expandedFolders[folderFullPath];
+    setExpandedFolders(prev => ({ ...prev, [folderFullPath]: nextState }));
+
+    if (nextState) {
+      const cached = folderChildrenMap[folderFullPath];
+      // 如果尚未缓存且无预填子项，立即按需异步加载单层直接子项
+      if (!cached && window.codexDesktop?.readDirectoryChildren) {
+        setLoadingFolders(prev => ({ ...prev, [folderFullPath]: true }));
+        try {
+          const children = await window.codexDesktop.readDirectoryChildren(folderFullPath);
+          setFolderChildrenMap(prev => ({ ...prev, [folderFullPath]: children || [] }));
+        } catch (err) {
+          console.error('动态拉取子目录失败:', folderFullPath, err);
+        } finally {
+          setLoadingFolders(prev => ({ ...prev, [folderFullPath]: false }));
+        }
+      }
+    }
   };
 
   const filteredSkills = skills.filter(s => {
@@ -357,14 +412,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
     if (['css', 'scss', 'less'].includes(ext || '')) {
       return <FileText size={13} className="text-sky-400 shrink-0" />;
     }
+    if (['bat', 'cmd', 'sh', 'ps1'].includes(ext || '')) {
+      return <FileCode size={13} className="text-amber-500 shrink-0" />;
+    }
     return <FileText size={13} className="text-text-muted shrink-0" />;
   };
 
-  // 递归渲染目录树节点
+  // 递归渲染目录树节点（融合懒加载缓存，保证同级与根级普通文件 100% 完整展示）
   const renderTreeItems = (items: WorkspaceFileItem[], depth = 0) => {
     return items.map(item => {
       if (item.isDirectory) {
         const isExpanded = !!expandedFolders[item.fullPath];
+        const children = folderChildrenMap[item.fullPath] || item.children || [];
+        const isLoadingChildren = !!loadingFolders[item.fullPath];
+
         return (
           <div key={item.fullPath} className="space-y-0.5">
             <div
@@ -380,9 +441,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
               )}
               <Folder size={13} className="text-amber-400 shrink-0" />
               <span className="truncate">{item.name}</span>
+              {isLoadingChildren && (
+                <Loader2 size={11} className="animate-spin text-accent ml-auto shrink-0" />
+              )}
             </div>
-            {isExpanded && item.children && item.children.length > 0 && (
-              <div>{renderTreeItems(item.children, depth + 1)}</div>
+            {isExpanded && (
+              <div>
+                {children.length > 0 ? (
+                  renderTreeItems(children, depth + 1)
+                ) : !isLoadingChildren ? (
+                  <div
+                    style={{ paddingLeft: `${(depth + 1) * 10 + 20}px` }}
+                    className="py-0.5 text-[11px] text-text-muted/60 italic select-none"
+                  >
+                    (空目录)
+                  </div>
+                ) : null}
+              </div>
             )}
           </div>
         );
@@ -628,6 +703,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           title={`在【${wf.name}】下新建会话`}
                         >
                           <Plus size={12} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => handleRemoveWorkspaceFolder(wf.path, e)}
+                          className="p-1 hover:bg-bg-card hover:text-rose-400 rounded text-text-muted transition-colors"
+                          title={`从侧边栏移除工程【${wf.name}】`}
+                        >
+                          <Trash2 size={12} />
                         </button>
                       </div>
                     </div>
@@ -985,6 +1068,35 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </div>
               )}
             </div>
+
+            {/* 错误或超时优雅降级卡片 */}
+            {workspaceError && (
+              <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-amber-500 text-xs space-y-2">
+                <div className="flex items-start gap-1.5 font-medium">
+                  <Info size={14} className="shrink-0 mt-0.5" />
+                  <span className="leading-relaxed">{workspaceError}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => loadWorkspaceTree(workspacePath)}
+                    className="px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-500 rounded text-[11px] font-medium transition-colors cursor-pointer"
+                  >
+                    重试扫描
+                  </button>
+                  <button
+                    onClick={() => {
+                      setWorkspaceError(null);
+                      setWorkspacePath('');
+                      setWorkspaceTree([]);
+                      localStorage.removeItem('codex_workspace_dir');
+                    }}
+                    className="px-2.5 py-1 bg-bg-card hover:bg-bg-hover text-text-secondary border border-border rounded text-[11px] transition-colors cursor-pointer"
+                  >
+                    清除此工作区
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* 文件树内容 */}
             {isLoadingWorkspace ? (

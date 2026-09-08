@@ -36,4 +36,5 @@ Thumbs.db
 .agent/
 
 # 技能临时测试生成物
-.agents/skills/**/test-results.md
+.agents/skills/**/test-results.md
+问题.md
