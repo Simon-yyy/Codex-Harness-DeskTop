@@ -120,13 +120,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          const valid = parsed.filter(f => !/^[yY]:/i.test(f.path) && !f.name.includes('已解析'));
-          localStorage.setItem('codex_workspace_folders_v1', JSON.stringify(valid));
-          return valid;
+          return parsed;
         }
       }
     } catch (e) {}
-    if (activeWorkspaceDir && !/^[yY]:/i.test(activeWorkspaceDir) && !activeWorkspaceDir.includes('已解析')) {
+    if (activeWorkspaceDir) {
       const name = activeWorkspaceDir.replace(/[\\/]$/, '').split(/[\\/]/).pop() || '当前工程';
       return [{ id: activeWorkspaceDir, path: activeWorkspaceDir, name }];
     }
@@ -138,12 +136,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   // 工作区状态
   const [workspacePath, setWorkspacePath] = useState<string>(() => {
-    const raw = activeWorkspaceDir || localStorage.getItem('codex_workspace_dir') || '';
-    if (/^[yY]:/i.test(raw) || raw.includes('已解析')) {
-      localStorage.removeItem('codex_workspace_dir');
-      return '';
-    }
-    return raw;
+    return activeWorkspaceDir || localStorage.getItem('codex_workspace_dir') || '';
   });
   const [workspaceName, setWorkspaceName] = useState<string>('');
   const [workspaceTree, setWorkspaceTree] = useState<WorkspaceFileItem[]>([]);
@@ -292,7 +285,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   // 挂载或工作区路径变化时加载真实工程文件树
   const loadWorkspaceTree = async (dirPath: string) => {
-    if (!dirPath || /^[yY]:/i.test(dirPath) || dirPath.includes('已解析') || !window.codexDesktop?.readWorkspaceTree) {
+    if (!dirPath || !window.codexDesktop?.readWorkspaceTree) {
       setWorkspaceTree([]);
       setWorkspaceName('');
       setWorkspaceError(null);

@@ -37,4 +37,7 @@ Thumbs.db
 
 # 技能临时测试生成物
 .agents/skills/**/test-results.md
+
+# 本地私人笔记与 AI 会话导出（非产品文档）
 问题.md
+docs/chat_records/

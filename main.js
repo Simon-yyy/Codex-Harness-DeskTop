@@ -244,41 +244,6 @@ function createWindow() {
     }, 3000);
   });
 
-  // 安全自动清理脱机/网络驱动器工作区，防止卡死
-  mainWindow.webContents.on("did-finish-load", () => {
-    mainWindow.webContents.executeJavaScript(`
-      (() => {
-        try {
-          const cur = localStorage.getItem('codex_workspace_dir');
-          if (cur && (/^[yY]:/i.test(cur) || cur.includes('已解析'))) {
-            localStorage.removeItem('codex_workspace_dir');
-          }
-          const folders = localStorage.getItem('codex_workspace_folders_v1');
-          if (folders) {
-            const list = JSON.parse(folders);
-            const filtered = list.filter(f => !/^[yY]:/i.test(f.path) && !f.name.includes('已解析'));
-            localStorage.setItem('codex_workspace_folders_v1', JSON.stringify(filtered));
-          }
-          const sessions = localStorage.getItem('codex_sessions_v2');
-          if (sessions) {
-            const sList = JSON.parse(sessions);
-            let changed = false;
-            sList.forEach(s => {
-              if (s.workspaceDir && (/^[yY]:/i.test(s.workspaceDir) || (s.workspaceName && s.workspaceName.includes('已解析')))) {
-                s.workspaceDir = '';
-                s.workspaceName = '';
-                changed = true;
-              }
-            });
-            if (changed) {
-              localStorage.setItem('codex_sessions_v2', JSON.stringify(sList));
-            }
-          }
-        } catch (e) {}
-      })();
-    `).catch(() => {});
-  });
-
   // 处理外部链接，防止在应用内跳出
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("http://") || url.startsWith("https://")) {
