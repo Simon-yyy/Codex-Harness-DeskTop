@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [v1.1.7] - 2026-09-09
+### 🛡️ 安全沙箱与附件通道正式发版
+- 🛡️ **写盘先 contain 再 mkdir**：拦截 `../` 穿透时不再在工作区外留下 mkdir 副作用目录。
+- 🌳 **文件树 IPC 沙箱**：列目录对齐权限模式与工作区边界，`chat-only` 阻断。
+- 📦 **更新下载 URL 白名单**：仅允许本仓库 GitHub Releases / 官方资产 CDN 的 HTTPS 地址。
+- 🔐 **LLM 鉴权头强制覆盖**：`customHeaders` 不得覆盖 `Authorization` / `x-api-key`；endpoint 仅允许 http/https。
+- 📎 **Composer 附件加固**：文本/代码附件可读入；拒收 `.env`、二进制 Null Byte、数量/体积上限；自适应 fence。
+- ✅ **回归**：Seam 17 新增向量 17/18；全量 `npm test` + `agent-verify` 通过。
+
+## [v1.1.6] - 2026-09-09
+### 🛡️ 安全沙箱加固 · 附件通道补齐 · 文档对齐
+- 🛡️ **写盘先 contain 再 mkdir**：修复 `../` 穿透在拒绝写入前仍可能在工作区外创建目录的副作用。
+- 🌳 **文件树 IPC 沙箱**：`read-workspace-tree` / `read-directory-children` 对齐权限模式与工作区边界，`chat-only` 阻断列目录。
+- 📦 **更新下载 URL 白名单**：仅允许本仓库 GitHub Releases / 官方资产 CDN 的 HTTPS 地址。
+- 🔐 **LLM 鉴权头强制覆盖**：`customHeaders` 不得覆盖 `Authorization` / `x-api-key`；endpoint 仅允许 http/https。
+- 📎 **Composer 附件加固**：文本/代码附件真正可读入；拒收 `.env`、Null Byte 二进制、数量/体积上限；自适应 fence 防打断。
+- 📄 **CHANGELOG / AGENTS / .gitignore** 与当前权限模型、React 18.3、`.ai-memory/` 对齐。
+
+## [v1.1.5] - 2026-09-08
+### 🖤 黑屏熔断 · 工作区移除 · 流式写盘守卫
+- ⏱️ **文件树异步扫描 + 2.5s 超时熔断**：避免网络盘/超大目录卡死主进程导致渲染黑屏。
+- 📂 **工作区移除与会话联动**：支持从侧栏移除工作区并同步会话绑定。
+- ✍️ **流式写盘守卫**：仅在真实流式生成完成后落盘，避免误写。
+
 ## [v1.1.4] - 2026-09-06
 ### 📑 交付文档直落工作区 · 路径连字符缺陷修复 · 侧边栏拖拽拉伸 · 字体调节中心
 - 📑 **审查报告与设计方案直落工作区**：告别全篇堆砌在对话流中刷屏，大模型输出完整文档包裹在带 filepath 的代码块中自动落盘，并在顶部呈现【结构化审查报告 / 交付文档】卡片，支持一键存为工作区文档与侧边抽屉全景阅读。

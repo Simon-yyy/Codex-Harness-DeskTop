@@ -11,7 +11,7 @@
 - **技术栈**：
   - **桌面框架**：Electron `33.4.11` (Node.js 运行环境，绝对锁定版本)
   - **打包与分发**：`electron-builder` (`^25.1.8`)，输出 NSIS 独立安装包
-  - **现代化前端与界面**：React `18/19` + TypeScript + Vite + TailwindCSS (4 款高对比度主题) + Lucide Icons
+  - **现代化前端与界面**：React `18.3` + TypeScript + Vite + TailwindCSS (4 款高对比度主题) + Lucide Icons
   - **模型通信协议**：双协议自适应管道（OpenAI Chat Completions 兼容协议 + Anthropic Messages 协议 + Ollama 本地协议）
   - **官方内核标准**：对齐 OpenAI 官方最新 **Codex CLI (`@openai/codex` v0.152.1)**
 
@@ -23,7 +23,7 @@
 codex-desktop/
 ├── main.js                  # Electron 主进程：窗口管理、原生中文菜单、自动更新流、IPC 管道、技能热同步
 ├── preload.js               # 安全预加载脚本：上下文隔离桥梁、主题引擎注入、原生剪贴板拦截
-├── src/                     # 现代化 React 19 + TypeScript 渲染层
+├── src/                     # 现代化 React 18.3 + TypeScript 渲染层
 │   ├── main.tsx             # React 渲染入口
 │   ├── App.tsx              # 主工作台三栏布局与领域状态调度
 │   ├── components/          # 独立组件库 (Sidebar, ChatStream, Composer, PreviewPanel, Modals)
@@ -38,7 +38,7 @@ codex-desktop/
 │   └── check-skills.mjs     # 43 项技能结构、元数据与 YAML 合规性零依赖静态健康扫描器
 ├── tests/                   # 18 大 Seam 边界全自动化 TDD 测试套件
 │   ├── run-all-tests.mjs    # 主测试执行器 (58 项核心单元与集成断言)
-│   ├── workspace-security.test.mjs # Seam 17 主进程权威安全沙箱攻击防护测试 (13 项向量断言)
+│   ├── workspace-security.test.mjs # Seam 17 主进程权威安全沙箱攻击防护测试 (15+ 项向量断言)
 │   ├── interaction-features.test.mjs # Seam 18 流式打断与消息撤回状态机专项测试 (4 项断言)
 │   ├── renderer-behavior.test.mjs # 渲染层 VM + DOM 桩行为测试
 │   └── reply-parsing.test.mjs     # LLM 响应解析与防 HTML 误判测试
@@ -54,7 +54,7 @@ codex-desktop/
 | 任务 | 命令 | 说明 |
 | :--- | :--- | :--- |
 | **启动开发** | `npm start` | 启动本地 Electron 桌面客户端进行实时调试 |
-| **全量测试** | `npm test` | 执行 18 大 Seam 边界共 75 项自动化测试及全量技能静态健康扫描 |
+| **全量测试** | `npm test` | 执行 18 大 Seam 边界共 77+ 项自动化测试及全量技能静态健康扫描 |
 | **快速解包** | `npm run pack` | 打包生成解包后的应用目录 `release/win-unpacked` |
 | **构建安装包** | `npm run build` | 调用 `electron-builder` 生成 NSIS 安装包 `.exe` 并归档发布 |
 | **归档发布** | `npm run release` | 执行 SHA-256 计算、安装包与 Release Notes 归档与旧版本自动修剪 |
@@ -82,7 +82,7 @@ codex-desktop/
    - 底部状态栏指标严禁使用静态 Mock 占位，必须打通全链路实时数据；
    - 严格采集真实的首 Token 延迟 (TTFT)、实时流式速率 (tok/s)、真实 Usage 统计与上下文缓存命中率 (Cache Hit %)。
 7. **主进程权威安全沙箱 (Seam 17)**：
-   - 严格守卫 `chat-only`、`workspace-readonly`、`workspace-readwrite` 三大权限模式；
+   - 严格守卫 `chat-only`、`workspace-readonly`、`workspace-readwrite`、`full-access` 四大权限模式；
    - 阻断相对路径穿透 (`../`)、绝对路径越权与软链接物理逃逸；
    - 物理文件写回磁盘时必须自动保留同名 `.bak` 备份副本。
 8. **流式生成打断与对话撤回状态机 (Seam 18)**：

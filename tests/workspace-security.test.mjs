@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import assert from 'node:assert';
+import { fileURLToPath } from 'node:url';
 
 /**
  * Seam 17: 安全沙箱攻击向量全景测试套件
@@ -225,7 +226,14 @@ export function runWorkspaceSecurityTests() {
     assert.strictEqual(resRwTraversal.code, "PERMISSION_DENIED");
     process.stdout.write("  ✅ [PASS] 向量 9: workspace-readwrite 读写模式工作区严格边界守卫 (PERMISSION_DENIED)\n");
 
-    // 提取 main.js 中的 write-workspace-file 算法
+    // 提取 main.js 中的 write-workspace-file 算法（与生产逻辑同序：先 contain 再 mkdir）
+    function isPathLogicallyInside(rootDir, targetPath) {
+      const root = path.resolve(rootDir);
+      const target = path.resolve(targetPath);
+      const rel = path.relative(root, target);
+      return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+    }
+
     function simulateWriteWorkspaceFile({ relativePath, content = "", createBackup = true }, authoritativeSandbox) {
       const mode = authoritativeSandbox.permissionMode;
       const workspace = authoritativeSandbox.activeWorkspaceDir;
@@ -249,8 +257,14 @@ export function runWorkspaceSecurityTests() {
         }
         candidatePath = path.resolve(workspace, relativePath);
         try {
+          if (!isPathLogicallyInside(workspace, candidatePath)) {
+            return { ok: false, code: "PERMISSION_DENIED", reason: "越权写入拦截" };
+          }
           const realWorkspace = fs.realpathSync(workspace);
           const targetDir = path.dirname(candidatePath);
+          if (!isPathLogicallyInside(realWorkspace, targetDir)) {
+            return { ok: false, code: "PERMISSION_DENIED", reason: "越权写入拦截" };
+          }
           if (!fs.existsSync(targetDir)) {
             fs.mkdirSync(targetDir, { recursive: true });
           }
@@ -357,6 +371,26 @@ export function runWorkspaceSecurityTests() {
     // 确保源文件未受破坏
     assert.strictEqual(fs.readFileSync(legalFilePath, "utf8"), "export const greeting = 'Hello inside workspace';", "源文件必须保持完好无损");
     process.stdout.write("  ✅ [PASS] 向量 16: write-workspace-file 防懒惰占位符截断覆写拦截成功 (STUB_DETECTED)\n");
+
+    // 测试 17: mkdir 不得先于 contain 检查在工作区外创建目录
+    const mkdirProbeRel = "../outside-secret/mkdir-probe-should-not-exist/evil.ts";
+    const mkdirProbeDir = path.join(outsideDir, "mkdir-probe-should-not-exist");
+    assert.ok(!fs.existsSync(mkdirProbeDir), "探测目录测试前不应存在");
+    const resMkdirProbe = simulateWriteWorkspaceFile({ relativePath: mkdirProbeRel, content: "evil" }, rwSandbox);
+    assert.strictEqual(resMkdirProbe.ok, false, "越权写入必须失败");
+    assert.strictEqual(resMkdirProbe.code, "PERMISSION_DENIED");
+    assert.ok(!fs.existsSync(mkdirProbeDir), "拦截后不得在工作区外留下 mkdir 副作用目录");
+    process.stdout.write("  ✅ [PASS] 向量 17: write 越权拦截不得先 mkdir 污染工作区外目录\n");
+
+    // 测试 18: 文件树 / 更新下载 / LLM 鉴权头硬门禁静态断言（对齐 main.js 生产实现）
+    const mainJsPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "main.js");
+    const mainJs = fs.readFileSync(mainJsPath, "utf8");
+    assert.ok(mainJs.includes("resolveTreePathOrDeny"), "文件树必须走路径沙箱门禁");
+    assert.ok(mainJs.includes("BLOCKED_TREE_CHAT_ONLY"), "chat-only 必须阻断文件树");
+    assert.ok(mainJs.includes("isAllowedUpdateDownloadUrl"), "更新下载必须有 URL 白名单");
+    assert.ok(mainJs.includes("delete safeCustomHeaders.Authorization"), "LLM 鉴权头不得被 customHeaders 覆盖");
+    assert.ok(mainJs.includes("isPathLogicallyInside(workspace, candidatePath)"), "写盘必须先逻辑 contain 再 mkdir");
+    process.stdout.write("  ✅ [PASS] 向量 18: 文件树沙箱 / 更新白名单 / LLM 鉴权头强制覆盖静态门禁\n");
 
   } finally {
     // 清理测试临时文件

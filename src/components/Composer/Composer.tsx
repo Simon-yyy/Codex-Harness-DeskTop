@@ -29,6 +29,67 @@ const SLASH_COMMANDS = [
   { cmd: '/help', desc: '查看所有支持的快捷指令与操作说明', icon: HelpCircle },
 ];
 
+interface AttachedTextFile {
+  name: string;
+  content: string;
+}
+
+const TEXT_FILE_EXTS = new Set([
+  '.txt', '.md', '.json', '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs',
+  '.py', '.css', '.html', '.htm', '.yml', '.yaml', '.xml', '.csv',
+  '.sh', '.ps1', '.java', '.go', '.rs', '.toml', '.ini',
+]);
+const MAX_TEXT_FILE_BYTES = 256 * 1024;
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_IMAGES = 8;
+const MAX_TEXT_FILES = 10;
+
+function isTextAttachment(file: File): boolean {
+  if (file.type.startsWith('text/')) return true;
+  if (file.type === 'application/json' || file.type === 'application/javascript') return true;
+  const dot = file.name.lastIndexOf('.');
+  if (dot < 0) return false;
+  return TEXT_FILE_EXTS.has(file.name.slice(dot).toLowerCase());
+}
+
+function isSensitiveAttachmentName(name: string): boolean {
+  const lower = name.toLowerCase();
+  return lower === '.env' || lower.endsWith('.env') || lower.includes('.env.');
+}
+
+function wrapAttachmentFence(name: string, content: string): string {
+  let ticks = '```';
+  while (content.includes(ticks)) ticks += '`';
+  return `【附件文件: ${name}】\n${ticks}\n${content}\n${ticks}`;
+}
+
+function readFileAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('读取文件失败'));
+    reader.readAsText(file);
+  });
+}
+
+function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as ArrayBuffer);
+    reader.onerror = () => reject(reader.error || new Error('读取文件失败'));
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+function hasNullByte(buf: ArrayBuffer): boolean {
+  const view = new Uint8Array(buf);
+  const limit = Math.min(view.length, 8192);
+  for (let i = 0; i < limit; i++) {
+    if (view[i] === 0) return true;
+  }
+  return false;
+}
+
 export const Composer: React.FC<ComposerProps> = ({
   onSend,
   isGenerating,
@@ -45,6 +106,8 @@ export const Composer: React.FC<ComposerProps> = ({
   onSelectPermissionMode,
 }) => {
   const [images, setImages] = useState<AttachedImage[]>([]);
+  const [textFiles, setTextFiles] = useState<AttachedTextFile[]>([]);
+  const [attachHint, setAttachHint] = useState<string | null>(null);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [showPermissionPicker, setShowPermissionPicker] = useState(false);
@@ -111,10 +174,16 @@ export const Composer: React.FC<ComposerProps> = ({
   };
 
   const handleSend = () => {
-    if (!inputPrompt.trim() && images.length === 0) return;
-    onSend(inputPrompt, images);
+    if (!inputPrompt.trim() && images.length === 0 && textFiles.length === 0) return;
+
+    const textParts = textFiles.map((f) => wrapAttachmentFence(f.name, f.content));
+    const finalText = [inputPrompt.trim(), ...textParts].filter(Boolean).join('\n\n');
+
+    onSend(finalText, images);
     setInputPrompt('');
     setImages([]);
+    setTextFiles([]);
+    setAttachHint(null);
     setShowSlashMenu(false);
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
@@ -129,10 +198,26 @@ export const Composer: React.FC<ComposerProps> = ({
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (!files) return;
+    if (!files || files.length === 0) return;
+
+    const unsupported: string[] = [];
+    const oversized: string[] = [];
+    const blocked: string[] = [];
+    let imageSlots = images.length;
+    let textSlots = textFiles.length;
+
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       if (file.type.startsWith('image/')) {
+        if (imageSlots >= MAX_IMAGES) {
+          blocked.push(`${file.name}(图片数已满)`);
+          continue;
+        }
+        if (file.size > MAX_IMAGE_BYTES) {
+          oversized.push(file.name);
+          continue;
+        }
+        imageSlots += 1;
         const reader = new FileReader();
         reader.onload = async (evt) => {
           const base64 = evt.target?.result as string;
@@ -141,11 +226,64 @@ export const Composer: React.FC<ComposerProps> = ({
             const res = await window.codexDesktop.saveTempImage(base64);
             if (res && res.success) localPath = res.path;
           }
-          setImages(prev => [...prev, { base64, path: localPath }]);
+          setImages((prev) => {
+            if (prev.length >= MAX_IMAGES) return prev;
+            return [...prev, { base64, path: localPath }];
+          });
         };
         reader.readAsDataURL(file);
+        continue;
       }
+
+      if (isSensitiveAttachmentName(file.name)) {
+        blocked.push(file.name);
+        continue;
+      }
+
+      if (isTextAttachment(file)) {
+        if (textSlots >= MAX_TEXT_FILES) {
+          blocked.push(`${file.name}(文本附件数已满)`);
+          continue;
+        }
+        if (file.size > MAX_TEXT_FILE_BYTES) {
+          oversized.push(file.name);
+          continue;
+        }
+        try {
+          const buf = await readFileAsArrayBuffer(file);
+          if (hasNullByte(buf)) {
+            blocked.push(`${file.name}(疑似二进制)`);
+            continue;
+          }
+          const content = await readFileAsText(file);
+          textSlots += 1;
+          setTextFiles((prev) => {
+            if (prev.length >= MAX_TEXT_FILES) return prev;
+            return [...prev, { name: file.name, content }];
+          });
+        } catch {
+          unsupported.push(file.name);
+        }
+        continue;
+      }
+
+      unsupported.push(file.name);
     }
+
+    const hints: string[] = [];
+    if (unsupported.length > 0) {
+      hints.push(`暂不支持: ${unsupported.join('、')}（仅支持图片与常见文本/代码文件）`);
+    }
+    if (oversized.length > 0) {
+      hints.push(`文件过大已跳过: ${oversized.join('、')}（文本 ≤256KB / 图片 ≤10MB）`);
+    }
+    if (blocked.length > 0) {
+      hints.push(`已拦截: ${blocked.join('、')}（敏感名 / 二进制 / 数量上限）`);
+    }
+    setAttachHint(hints.length > 0 ? hints.join('；') : null);
+
+    // 允许重复选择同一文件再次触发 onChange
+    e.target.value = '';
   };
 
   const handlePaste = async (e: React.ClipboardEvent) => {
@@ -223,10 +361,10 @@ export const Composer: React.FC<ComposerProps> = ({
       )}
 
       {/* 附件缩略图条 */}
-      {images.length > 0 && (
+      {(images.length > 0 || textFiles.length > 0) && (
         <div className="mb-2 flex flex-wrap gap-2 p-2 bg-bg-card border border-border rounded-xl">
           {images.map((img, idx) => (
-            <div key={idx} className="relative group">
+            <div key={`img-${idx}`} className="relative group">
               <img
                 src={img.base64}
                 alt="附件预览"
@@ -240,6 +378,28 @@ export const Composer: React.FC<ComposerProps> = ({
               </button>
             </div>
           ))}
+          {textFiles.map((file, idx) => (
+            <div
+              key={`txt-${idx}-${file.name}`}
+              className="relative group flex items-center gap-1.5 h-14 max-w-[180px] px-2.5 rounded-lg border border-border bg-bg-sidebar"
+              title={file.name}
+            >
+              <FileEdit size={14} className="text-accent shrink-0" />
+              <span className="text-[11px] text-text-primary truncate">{file.name}</span>
+              <button
+                onClick={() => setTextFiles(prev => prev.filter((_, i) => i !== idx))}
+                className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-0.5 shadow-sm opacity-90 hover:opacity-100"
+              >
+                <X size={10} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {attachHint && (
+        <div className="mb-2 px-2.5 py-1.5 text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+          {attachHint}
         </div>
       )}
 
@@ -338,7 +498,7 @@ export const Composer: React.FC<ComposerProps> = ({
               ref={fileInputRef}
               onChange={handleFileUpload}
               multiple
-              accept="image/*,.txt,.js,.ts,.py,.json,.md"
+              accept="image/*,.txt,.md,.json,.js,.jsx,.ts,.tsx,.mjs,.cjs,.py,.css,.html,.htm,.yml,.yaml,.xml,.csv,.sh,.ps1,.java,.go,.rs,.toml,.ini"
               className="hidden"
             />
           </label>
@@ -574,7 +734,7 @@ export const Composer: React.FC<ComposerProps> = ({
               <button
                 type="button"
                 onClick={handleSend}
-                disabled={!inputPrompt.trim() && images.length === 0}
+                disabled={!inputPrompt.trim() && images.length === 0 && textFiles.length === 0}
                 className="w-7 h-7 rounded-full bg-gradient-to-r from-accent to-accent-secondary hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed text-white flex items-center justify-center transition-all shadow-xs active:scale-95 cursor-pointer"
                 title="发送 (Enter)"
               >

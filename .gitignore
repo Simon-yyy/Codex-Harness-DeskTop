@@ -35,9 +35,14 @@ Thumbs.db
 # Agent Harness Traces
 .agent/
 
+# AI 会话记忆（本地，不入库）
+.ai-memory/
+MEMORY.md
+
 # 技能临时测试生成物
 .agents/skills/**/test-results.md
 
-# 本地私人笔记与 AI 会话导出（非产品文档）
+# 本地私人笔记与临时产物（非产品文档）
 问题.md
 docs/chat_records/
+scratch_old_exe/

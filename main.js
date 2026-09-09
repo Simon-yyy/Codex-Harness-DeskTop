@@ -9,6 +9,47 @@ let mainWindow = null;
 let isDownloadingUpdate = false;
 let isQuitting = false;
 
+/** 跨平台路径标准化（盘符大小写 + 斜杠） */
+function normalizeFsPath(p) {
+  if (!p || typeof p !== "string") return "";
+  return path.resolve(p).replace(/\\/g, "/").toLowerCase();
+}
+
+/** 逻辑路径是否位于 root 内（mkdir 前先判，避免越权建目录） */
+function isPathLogicallyInside(rootDir, targetPath) {
+  if (!rootDir || !targetPath) return false;
+  const root = path.resolve(rootDir);
+  const target = path.resolve(targetPath);
+  const rel = path.relative(root, target);
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
+/** 仅允许本仓库 GitHub Releases 官方 HTTPS 安装包地址 */
+function isAllowedUpdateDownloadUrl(downloadUrl) {
+  if (!downloadUrl || typeof downloadUrl !== "string") return false;
+  let u;
+  try {
+    u = new URL(downloadUrl);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== "https:") return false;
+  const host = u.hostname.toLowerCase();
+  const pathname = u.pathname || "";
+  if (host === "github.com") {
+    return /^\/Simon-yyy\/Codex-Harness-DeskTop\/releases\//i.test(pathname);
+  }
+  // GitHub Release 资产 CDN（browser_download_url 常跳转到此）
+  if (
+    host === "objects.githubusercontent.com" ||
+    host === "release-assets.githubusercontent.com" ||
+    host === "github-releases.githubusercontent.com"
+  ) {
+    return true;
+  }
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // 自动初始化并热同步内置技能 (35 个 Matt Pocock 技能 + 8 个 Loop Engineering 技能)
 // ---------------------------------------------------------------------------
@@ -425,6 +466,19 @@ function checkForUpdates(isSilent = false) {
 }
 
 function startDownloadUpdate(assetUrl, newVersion) {
+  if (!isAllowedUpdateDownloadUrl(assetUrl)) {
+    console.error("[codex-desktop] 拒绝非白名单更新下载 URL:", assetUrl);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("update-error", { error: "更新下载地址未通过安全白名单校验" });
+    }
+    dialog.showMessageBox(mainWindow || null, {
+      type: "error",
+      title: "更新被拒绝",
+      message: "下载地址未通过安全白名单校验，已阻止安装包下载。\n请仅通过应用内检查更新获取官方版本。",
+      buttons: ["确定"]
+    });
+    return;
+  }
   if (isDownloadingUpdate) return;
   isDownloadingUpdate = true;
   const tempDir = os.tmpdir();
@@ -548,11 +602,14 @@ ipcMain.handle("check-for-updates-manual", () => {
 });
 
 ipcMain.handle("start-download-update-action", (_event, { downloadUrl, version }) => {
-  if (downloadUrl && version) {
-    startDownloadUpdate(downloadUrl, version);
-    return { success: true };
+  if (!downloadUrl || !version) {
+    return { success: false, error: "Missing downloadUrl or version" };
   }
-  return { success: false, error: "Missing downloadUrl or version" };
+  if (!isAllowedUpdateDownloadUrl(downloadUrl)) {
+    return { success: false, error: "Download URL failed allowlist check" };
+  }
+  startDownloadUpdate(downloadUrl, version);
+  return { success: true };
 });
 
 // 官方 Codex CLI (Rust / Node @openai/codex) 状态检测适配器
@@ -646,7 +703,6 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
     const { endpoint, apiKey, body, customHeaders = {}, timeout: userTimeout, stream = false, streamId = '' } = payload;
     const https = require("https");
     const http = require("http");
-    const url = require("url");
 
     // 如果启用了流式传输，确保 body.stream 为 true
     if (stream && typeof body === 'object' && body !== null) {
@@ -655,38 +711,60 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
 
     const postData = JSON.stringify(body);
     const cleanKey = (apiKey || "").trim();
-    const parsedUrl = url.parse(endpoint);
+
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(endpoint);
+    } catch {
+      return {
+        ok: false,
+        status: 400,
+        statusText: "Bad Request",
+        body: JSON.stringify({ error: { message: "无效的 API endpoint URL" } })
+      };
+    }
+    if (parsedUrl.protocol !== "https:" && parsedUrl.protocol !== "http:") {
+      return {
+        ok: false,
+        status: 400,
+        statusText: "Bad Request",
+        body: JSON.stringify({ error: { message: "仅允许 http/https 协议的 LLM endpoint" } })
+      };
+    }
     const isHttps = parsedUrl.protocol === "https:";
     const client = isHttps ? https : http;
 
     // 判断是 Anthropic 原生端点还是 OpenAI 兼容端点
     const isAnthropicEndpoint = endpoint.includes("/messages");
 
+    // customHeaders 先合并，鉴权头后覆盖，防止渲染进程覆盖 Authorization / x-api-key
+    const safeCustomHeaders = (customHeaders && typeof customHeaders === "object") ? { ...customHeaders } : {};
+    delete safeCustomHeaders.Authorization;
+    delete safeCustomHeaders.authorization;
+    delete safeCustomHeaders["x-api-key"];
+    delete safeCustomHeaders["X-Api-Key"];
+
     let baseHeaders = {};
     if (isAnthropicEndpoint) {
-      // 纯净 Anthropic 官方客户端请求头 (模拟 Claude Code)
-      // 流式模式下不设置 Content-Length，防止与分块传输协议冲突触发 unexpected EOF
       baseHeaders = {
         "Content-Type": "application/json",
+        ...safeCustomHeaders,
         ...(stream ? {} : { "Content-Length": Buffer.byteLength(postData) }),
         "x-api-key": cleanKey,
         "anthropic-version": "2023-06-01",
         "User-Agent": "cline/3.0.0",
         "Accept": stream ? "text/event-stream, application/json" : "application/json",
-        "Connection": "keep-alive",
-        ...customHeaders
+        "Connection": "keep-alive"
       };
     } else {
-      // 纯净 OpenAI / Codex 官方 CLI 请求头 (严禁携带 Anthropic 混杂头，防 WAF 拦截)
-      // 流式模式下不设置 Content-Length，防止与分块传输协议冲突触发 unexpected EOF
       baseHeaders = {
         "Content-Type": "application/json",
+        ...safeCustomHeaders,
         ...(stream ? {} : { "Content-Length": Buffer.byteLength(postData) }),
         "Authorization": cleanKey ? `Bearer ${cleanKey}` : "",
         "User-Agent": "cline/3.0.0",
         "Accept": stream ? "text/event-stream, application/json" : "application/json",
-        "Connection": "keep-alive",
-        ...customHeaders
+        "Connection": "keep-alive"
       };
     }
 
@@ -738,8 +816,8 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
 
         const options = {
           hostname: parsedUrl.hostname,
-          port: parsedUrl.port || (isHttps ? 443 : 80),
-          path: parsedUrl.path,
+          port: parsedUrl.port ? Number(parsedUrl.port) : (isHttps ? 443 : 80),
+          path: `${parsedUrl.pathname || "/"}${parsedUrl.search || ""}`,
           method: "POST",
           headers: baseHeaders,
           // 若重试或对端单向重置，强制禁用 Agent 缓存 (新建全新 TCP 握手，规避 Half-Open 假死 Socket)
@@ -1034,15 +1112,24 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
     if (!dirPath || typeof dirPath !== "string") {
       SecuritySandbox.activeWorkspaceDir = null;
       SecuritySandbox.save();
+      SecuritySandbox.logAudit("WORKSPACE_DIR_CLEARED", "");
       return { ok: true, activeWorkspaceDir: null };
     }
     try {
       if (!fs.existsSync(dirPath)) {
         return { ok: false, error: "指定的工作区目录不存在" };
       }
+      const st = fs.statSync(dirPath);
+      if (!st.isDirectory()) {
+        return { ok: false, error: "指定路径不是目录" };
+      }
       const realDir = fs.realpathSync(dirPath);
+      const prev = SecuritySandbox.activeWorkspaceDir;
       SecuritySandbox.activeWorkspaceDir = realDir;
       SecuritySandbox.save();
+      if (normalizeFsPath(prev) !== normalizeFsPath(realDir)) {
+        SecuritySandbox.logAudit("WORKSPACE_DIR_CHANGED", `${prev || "(null)"} -> ${realDir}`);
+      }
       return { ok: true, activeWorkspaceDir: realDir };
     } catch (err) {
       SecuritySandbox.activeWorkspaceDir = dirPath;
@@ -1068,17 +1155,28 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
       };
     }
 
-    // 提升至全局受信任模式时，强制触发原生系统级警告确认弹窗 (防前端脚本与 XSS 自动提权)
-    if (targetMode === "full-access" && SecuritySandbox.permissionMode !== "full-access") {
+    // 提升至可写模式或全局受信任时，强制原生确认（防 XSS / 前端脚本自动提权）
+    const writeCapable = new Set(["workspace-readwrite", "full-access"]);
+    const elevatingToWrite =
+      writeCapable.has(targetMode) && !writeCapable.has(SecuritySandbox.permissionMode);
+    const elevatingToFull =
+      targetMode === "full-access" && SecuritySandbox.permissionMode !== "full-access";
+
+    if (elevatingToFull || elevatingToWrite) {
       const win = mainWindow || BrowserWindow.getFocusedWindow();
+      const isFull = elevatingToFull;
       const choice = await dialog.showMessageBox(win, {
         type: "warning",
-        buttons: ["取消", "确认提升为全局受信任"],
+        buttons: ["取消", isFull ? "确认提升为全局受信任" : "确认提升为工作区读写"],
         defaultId: 0,
         cancelId: 0,
         title: "安全权限提升确认",
-        message: "确定将 Agent 运行权限提升至【全局受信任】模式吗？",
-        detail: "警告：全局受信任模式允许 Agent 跨越当前工作区，读取本机任意系统路径下的文件（包括环境配置、系统依赖等）。\n\n请确认当前对话环境值得信赖。"
+        message: isFull
+          ? "确定将 Agent 运行权限提升至【全局受信任】模式吗？"
+          : "确定将 Agent 运行权限提升至【工作区读写】模式吗？",
+        detail: isFull
+          ? "警告：全局受信任模式允许 Agent 跨越当前工作区，读取本机任意系统路径下的文件（包括环境配置、系统依赖等）。\n\n请确认当前对话环境值得信赖。"
+          : "工作区读写模式允许 Agent 修改当前工作区内的文件（写入前会自动保留 .bak）。\n\n请确认当前对话环境值得信赖。"
       });
 
       if (choice.response !== 1) {
@@ -1319,10 +1417,30 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
 
       candidatePath = path.resolve(workspace, relativePath);
 
-      // 防 ../ 穿越或跨盘符逃逸
+      // 防 ../ 穿越：必须先做逻辑路径包含检查，再 mkdir（避免越权建目录副作用）
       try {
+        if (!isPathLogicallyInside(workspace, candidatePath)) {
+          SecuritySandbox.logAudit("BLOCKED_WRITE_TRAVERSAL", candidatePath);
+          return {
+            ok: false,
+            code: "PERMISSION_DENIED",
+            reason: "目标文件指向工作区外部物理路径 (越权写入或软链接逃逸已拦截)",
+            hint: "工作区读写模式下，严禁向工作区外部写入文件"
+          };
+        }
+
         const realWorkspace = fs.realpathSync(workspace);
         const targetDir = path.dirname(candidatePath);
+        if (!isPathLogicallyInside(realWorkspace, targetDir)) {
+          SecuritySandbox.logAudit("BLOCKED_WRITE_TRAVERSAL", candidatePath);
+          return {
+            ok: false,
+            code: "PERMISSION_DENIED",
+            reason: "目标文件指向工作区外部物理路径 (越权写入或软链接逃逸已拦截)",
+            hint: "工作区读写模式下，严禁向工作区外部写入文件"
+          };
+        }
+
         if (!fs.existsSync(targetDir)) {
           fs.mkdirSync(targetDir, { recursive: true });
         }
@@ -1584,14 +1702,72 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
     return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer));
   }
 
+  /** 文件树路径沙箱：chat-only 阻断；非 full-access 必须落在 activeWorkspaceDir 内 */
+  async function resolveTreePathOrDeny(folderPath) {
+    const mode = SecuritySandbox.permissionMode;
+    if (mode === "chat-only") {
+      SecuritySandbox.logAudit("BLOCKED_TREE_CHAT_ONLY", folderPath || "");
+      return { ok: false, code: "CHAT_ONLY_BLOCKED" };
+    }
+    if (!folderPath || typeof folderPath !== "string") {
+      return { ok: false, code: "INVALID_ARGUMENT" };
+    }
+
+    const resolved = path.resolve(folderPath);
+    if (mode === "full-access") {
+      let realTarget = resolved;
+      try {
+        realTarget = await fs.promises.realpath(resolved);
+      } catch (e) {
+        // 目录尚不存在时保留 resolve 结果
+      }
+      return { ok: true, realTarget, rootDir: SecuritySandbox.activeWorkspaceDir || realTarget };
+    }
+
+    const workspace = SecuritySandbox.activeWorkspaceDir;
+    if (!workspace) {
+      SecuritySandbox.logAudit("BLOCKED_TREE_NO_WORKSPACE", folderPath);
+      return { ok: false, code: "NO_WORKSPACE" };
+    }
+
+    let realWorkspace = workspace;
+    try {
+      realWorkspace = await fs.promises.realpath(workspace);
+    } catch (e) {
+      realWorkspace = path.resolve(workspace);
+    }
+
+    if (!isPathLogicallyInside(realWorkspace, resolved)) {
+      SecuritySandbox.logAudit("BLOCKED_TREE_TRAVERSAL", folderPath);
+      return { ok: false, code: "PERMISSION_DENIED" };
+    }
+
+    let realTarget = resolved;
+    try {
+      realTarget = await fs.promises.realpath(resolved);
+    } catch (e) {
+      realTarget = resolved;
+    }
+
+    if (!isPathLogicallyInside(realWorkspace, realTarget)) {
+      SecuritySandbox.logAudit("BLOCKED_TREE_TRAVERSAL", folderPath);
+      return { ok: false, code: "PERMISSION_DENIED" };
+    }
+
+    return { ok: true, realTarget, rootDir: realWorkspace };
+  }
+
   // 1. 读取指定单个目录的直接子项 (纯异步非阻塞 + 2.5秒超时熔断)
   ipcMain.handle("read-directory-children", async (_event, folderPath) => {
     if (!folderPath || typeof folderPath !== "string") return [];
     return withTimeout(
       (async () => {
         try {
-          const rootDir = SecuritySandbox.activeWorkspaceDir || folderPath;
-          const entries = await fs.promises.readdir(folderPath, { withFileTypes: true });
+          const gate = await resolveTreePathOrDeny(folderPath);
+          if (!gate.ok) return [];
+
+          const rootDir = gate.rootDir;
+          const entries = await fs.promises.readdir(gate.realTarget, { withFileTypes: true });
           const items = [];
 
           entries.sort((a, b) => {
@@ -1603,7 +1779,7 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
 
           for (const entry of entries) {
             if (!isWorkspaceEntryValid(entry.name, entry.isFile())) continue;
-            const fullPath = path.join(folderPath, entry.name);
+            const fullPath = path.join(gate.realTarget, entry.name);
             const relativePath = path.relative(rootDir, fullPath).replace(/\\/g, "/");
             items.push({
               name: entry.name,
@@ -1632,12 +1808,10 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
     return withTimeout(
       (async () => {
         try {
-          let realTarget = targetDir;
-          try {
-            realTarget = await fs.promises.realpath(targetDir);
-          } catch (e) {
-            realTarget = path.resolve(targetDir);
-          }
+          const gate = await resolveTreePathOrDeny(targetDir);
+          if (!gate.ok) return null;
+
+          const realTarget = gate.realTarget;
 
           let totalItemCount = 0;
           const MAX_TOTAL_ITEMS = 3000;
