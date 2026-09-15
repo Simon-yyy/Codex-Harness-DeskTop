@@ -55,6 +55,7 @@
 - 🚪 **主入口**：`main.js`
 - 🌉 **桥接层**：`preload.js`
 - 🖥️ **工作台**：`src/App.tsx`（`npm start` 加载 `ui/dist`；`ui/app.js` 只是备用静态页）
+- 🗺️ **模块职责表**：`AGENTS.md` →「模块职责与关键入口」
 - 🧪 **测试**：`tests/run-all-tests.mjs`、`tests/workspace-security.test.mjs`、`tests/interaction-features.test.mjs`
 - 🔍 **技能健康扫描**：`scripts/check-skills.mjs`
 - 📋 **技能说明**：`.agents/skills/README.md`

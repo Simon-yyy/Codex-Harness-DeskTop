@@ -21,31 +21,43 @@
 
 ```
 codex-desktop/
-├── main.js                  # Electron 主进程：窗口管理、原生中文菜单、自动更新流、IPC 管道、技能热同步
-├── preload.js               # 安全预加载脚本：上下文隔离桥梁、主题引擎注入、原生剪贴板拦截
-├── src/                     # 现代化 React 18.3 + TypeScript 渲染层
-│   ├── main.tsx             # React 渲染入口
-│   ├── App.tsx              # 主工作台三栏布局与领域状态调度
-│   ├── components/          # 独立组件库 (Sidebar, ChatStream, Composer, PreviewPanel, Modals)
-│   ├── hooks/               # 响应式状态机 (useSessions, useTabQueue, useProviders, useTheme, useUpdater)
-│   ├── types/               # 全链路强类型定义 (electron.d.ts, session.ts, provider.ts)
-│   └── styles/              # TailwindCSS 与 4 款高对比度主题变量
-├── ui/                      # 渲染进程构建产物 (ui/dist/) 与原生备选静态文件
-├── .agents/skills/          # 内置 43 项全流程工业级与 Loop Engineering 技能库 (启动时自动增量部署)
-├── scripts/
-│   ├── release.mjs          # 发版流水线：SHA-256 校验、版本产物自动归档至 release/v<version>/、发布说明生成
-│   ├── upload_release.mjs   # GitHub Releases 自动化上传脚本
-│   └── check-skills.mjs     # 43 项技能结构、元数据与 YAML 合规性零依赖静态健康扫描器
-├── tests/                   # 18 大 Seam 边界全自动化 TDD 测试套件
-│   ├── run-all-tests.mjs    # 主测试执行器
-│   ├── workspace-security.test.mjs # Seam 17 主进程权威安全沙箱攻击防护测试 (15+ 项向量断言)
-│   ├── interaction-features.test.mjs # Seam 18 流式打断、消息撤回、读/写工具与附件
-│   ├── renderer-behavior.test.mjs # 渲染层 VM + DOM 桩行为测试
-│   └── reply-parsing.test.mjs     # LLM 响应解析与防 HTML 误判测试
-├── release/                 # 发布产物与安装包归档目录
-└── contexts/
-    └── context.md           # 精简上下文地图与领域模型
+├── main.js                  # Electron 主进程权威入口
+├── preload.js               # contextIsolation 桥梁 → window.codexDesktop
+├── src/                     # React 18.3 + TS 渲染层（Vite 构建 → ui/dist）
+│   ├── main.tsx             # React 挂载入口
+│   ├── App.tsx              # 三栏工作台：会话/流式/工具环/遥测调度
+│   ├── components/          # UI 面：Sidebar / ChatStream / Composer / PreviewPanel / Modals / StatusBar
+│   ├── hooks/               # 领域状态：sessions / tabQueue / providers / theme / updater
+│   ├── types/               # electron.d.ts · session · provider
+│   ├── utils/               # mention（@ 原子删除）· math（公式辅助）
+│   └── data/                # skillsDictionary 技能元数据字典
+├── ui/                      # 构建产物 ui/dist/；ui/app.js 仅备用静态页
+├── .agents/skills/          # 内置 43 技能（启动热同步 → ~/.codex/skills/）
+├── scripts/                 # release / upload_release / check-skills / sync-ui
+├── tests/                   # Seam 全量 TDD（run-all + security + interaction + skills + connectors）
+├── docs/adr/                # 架构决策：0001 无感更新 · 0002 富文档/公式
+├── .github/workflows/       # release.yml 云端打 Tag 发版
+├── release/                 # 本地安装包归档（gitignore）
+└── contexts/context.md      # 领域模型与 18 Seam 边界表
 ```
+
+### 模块职责与关键入口
+
+| 模块 | 核心职责 | 关键入口 / 寻路 |
+| :--- | :--- | :--- |
+| **主进程** | 窗口/中文菜单、LLM 流式 IPC、工作区沙箱读写、docx/PDF 抽取与分块索引、技能/连接器、自动更新 | `main.js`：`call-llm-api` / `abort-llm-stream` / `read-workspace-file` / `write-workspace-file` / `index-workspace-document` / `read-document-chunk` / `search-document-chunks` / `get-skills` / `connectors-*` |
+| **预加载桥** | 暴露白名单 API；主题注入；剪贴板图拦截 | `preload.js` → 类型契约 `src/types/electron.d.ts` |
+| **工作台** | 三栏布局；工具环（读/写/分块/MCP）；空正文续写；历史压缩；遥测 | `src/App.tsx`（`npm start` 加载 `ui/dist`） |
+| **侧栏** | 会话按项目目录归类；文件树；技能筛选/注入；用户技能 CRUD 入口 | `src/components/Sidebar/` + `useSessions` |
+| **对话流** | Markdown/KaTeX 气泡；提前结束/继续生成；导出；Apply Diff | `ChatStream/` · `MarkdownRenderer.tsx` |
+| **输入区** | 附件、Slash、`@` 引用、Tab Queue、停止生成 | `Composer/` · `useTabQueue` · `utils/mention.ts` |
+| **预览栏** | 代码/Docx/Pdf 阅读；分块目录与关键词检索；可拉伸宽度 | `PreviewPanel/` · `DocxReader` / `PdfReader` |
+| **设置与弹窗** | Provider/模型 `maxTokens`·`reasoningEffort`；主题；连接器；更新提示；技能编辑 | `Modals/SettingsModal` · `ConnectorsModal` · `UserSkillEditorModal` |
+| **状态栏** | 真实 TTFT / tok/s / usage / cache hit | `StatusBar.tsx`（数据来自 `App` 流式回调） |
+| **Hooks** | 会话持久化、Provider 预设、主题、更新态、指令排队 | `hooks/useSessions` · `useProviders` · `useTheme` · `useUpdater` · `useTabQueue` |
+| **技能生态** | 内置热同步 + 用户技能隔离目录 | `.agents/skills/` · `main.js` `initBuiltinSkills` / `get-skills` |
+| **发版与质检** | NSIS 归档、GitHub 上传、技能 YAML 扫描 | `scripts/release.mjs` · `upload_release.mjs` · `check-skills.mjs` · `npm test` |
+| **领域地图** | 概念定义与 Seam 对照（细节以本表为入口） | `contexts/context.md` |
 
 ---
 
