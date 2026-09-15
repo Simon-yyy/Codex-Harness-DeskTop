@@ -71,7 +71,10 @@ export function runInteractionFeaturesTests() {
     const appTsx = fs.readFileSync(path.join(rootDir, "src", "App.tsx"), "utf8");
     const mdTsx = fs.readFileSync(path.join(rootDir, "src", "components", "ChatStream", "MarkdownRenderer.tsx"), "utf8");
     assert.ok(appTsx.includes("effectiveMaxTokens"), "App 必须计算 effectiveMaxTokens");
-    assert.ok(appTsx.includes("16384"), "默认 max_tokens 应为 16384");
+    assert.ok(appTsx.includes("DEFAULT_MAX_TOKENS") && /DEFAULT_MAX_TOKENS\s*=\s*32768/.test(appTsx), "默认 max_tokens 应为 32768（含思考占用）");
+    assert.ok(appTsx.includes("MAX_EMPTY_BODY_CONTINUES"), "必须支持空正文/额度截断自动续写");
+    assert.ok(appTsx.includes("EMPTY_BODY_CONTINUE_PROMPT"), "必须定义空正文自动续写提示");
+    assert.ok(appTsx.includes("shouldAutoContinueEmptyOrTruncated"), "必须判定何时自动续写");
     assert.ok(appTsx.includes("复用**完全相同**的 filepath") || appTsx.includes("完全相同"), "长文提示词须禁止拆分多文件");
     assert.ok(mdTsx.includes("function mergeFilesByPath"), "MarkdownRenderer 必须合并同 filepath 代码块");
     assert.ok(mdTsx.includes("mergedFiles"), "自动落盘必须使用合并后的文件列表");
@@ -163,6 +166,29 @@ export function runInteractionFeaturesTests() {
     assert.ok(!app.includes("请检查 Base URL 与 API Key 是否正确"), "空回复不得再归咎于 API Key");
   });
 
+  test("长文档分块索引: 目录挂载与 read_document_chunk", () => {
+    const mainJs = fs.readFileSync(path.join(rootDir, "main.js"), "utf8");
+    const app = fs.readFileSync(path.join(rootDir, "src", "App.tsx"), "utf8");
+    const preload = fs.readFileSync(path.join(rootDir, "preload.js"), "utf8");
+    const types = fs.readFileSync(path.join(rootDir, "src", "types", "electron.d.ts"), "utf8");
+    assert.ok(mainJs.includes("index-workspace-document"), "main 必须提供索引 IPC");
+    assert.ok(mainJs.includes("read-document-chunk"), "main 必须提供读块 IPC");
+    assert.ok(mainJs.includes("chunkDocumentText"), "main 必须实现正文切片");
+    assert.ok(mainJs.includes("MAX_INDEX_EXTRACTED_TEXT_CHARS"), "索引抽取上限须高于普通挂载");
+    assert.ok(preload.includes("indexWorkspaceDocument"), "preload 必须暴露 indexWorkspaceDocument");
+    assert.ok(preload.includes("readDocumentChunk"), "preload 必须暴露 readDocumentChunk");
+    assert.ok(types.includes("IndexWorkspaceDocumentResult"), "类型须声明索引结果");
+    assert.ok(app.includes("READ_DOCUMENT_CHUNK_TOOL_OPENAI"), "App 必须注册读块工具");
+    assert.ok(app.includes("formatDocumentIndexCard"), "App 必须生成目录卡片");
+    assert.ok(app.includes("DOC_INLINE_THRESHOLD_CHARS"), "App 必须定义整篇灌入阈值");
+    assert.ok(app.includes("executeReadDocumentChunkTools"), "App 必须执行读块工具");
+    assert.ok(app.includes("长文档已索引"), "目录卡片须标明未整篇灌入");
+    assert.ok(app.includes("read_document_chunk"), "只读提示或工具名须含 read_document_chunk");
+    assert.ok(app.includes("SEARCH_DOCUMENT_CHUNKS_TOOL_OPENAI"), "必须注册 search_document_chunks 工具");
+    assert.ok(app.includes("compressHistoryContent"), "必须压缩长历史上下文");
+    assert.ok(app.includes("reasoningEffortSystemHint"), "必须支持思考强度提示");
+  });
+
   test("docx 挂载: @ 中文路径与正文抽取", () => {
     const mainJs = fs.readFileSync(path.join(rootDir, "main.js"), "utf8");
     const app = fs.readFileSync(path.join(rootDir, "src", "App.tsx"), "utf8");
@@ -198,7 +224,8 @@ export function runInteractionFeaturesTests() {
     const sessionTs = fs.readFileSync(path.join(rootDir, "src", "types", "session.ts"), "utf8");
     assert.ok(mainJs.includes("finishReason"), "main 流结束 chunk 必须回传 finishReason");
     assert.ok(mainJs.includes("lastFinishReason"), "main 必须从 SSE 捕获 finish_reason/stop_reason");
-    assert.ok(mainJs.includes("180000"), "静默超时应为 180s");
+    assert.ok(mainJs.includes("600000"), "静默超时应为 600s");
+    assert.ok(mainJs.includes("search-document-chunks"), "必须提供分块关键词检索 IPC");
     assert.ok(app.includes("looksLikeEarlyEnd"), "App 必须区分提前结束与传输中断");
     assert.ok(app.includes("[输出提前结束]"), "提前结束须使用明确文案");
     assert.ok(app.includes("handleContinueGeneration"), "App 必须提供继续生成");

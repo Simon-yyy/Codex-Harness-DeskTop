@@ -649,9 +649,64 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             const val = e.target.value ? parseInt(e.target.value, 10) : undefined;
                             updateActiveModelConfig('timeoutSeconds', val);
                           }}
-                          placeholder="默认自适应滑动保活 (按输入长度 120s~300s 弹性伸缩，持续传输永不断开)"
+                          placeholder="默认：首包约 120s~300s；流开始后滑动静默约 600s"
                           className="w-full px-3 py-1.5 bg-bg-base border border-border rounded-lg text-xs font-mono text-text-primary focus:outline-none focus:border-accent"
                         />
+                      </div>
+
+                      {/* 4. 输出上限 maxTokens（含思考） */}
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-semibold text-text-primary">
+                            输出上限 maxTokens
+                          </label>
+                          <span className="text-[10px] text-text-muted">
+                            {activeModelConfig.maxTokens
+                              ? `自定义: ${activeModelConfig.maxTokens}`
+                              : '默认 32768（含思考）'}
+                          </span>
+                        </div>
+                        <input
+                          type="number"
+                          min="4096"
+                          max="128000"
+                          step="1024"
+                          value={activeModelConfig.maxTokens || ''}
+                          onChange={(e) => {
+                            const val = e.target.value ? parseInt(e.target.value, 10) : undefined;
+                            updateActiveModelConfig('maxTokens', val);
+                          }}
+                          placeholder="留空=32768；思考模型建议 ≥32768"
+                          className="w-full px-3 py-1.5 bg-bg-base border border-border rounded-lg text-xs font-mono text-text-primary focus:outline-none focus:border-accent"
+                        />
+                      </div>
+
+                      {/* 5. 思考强度 */}
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-semibold text-text-primary">
+                            思考强度
+                          </label>
+                          <span className="text-[10px] text-text-muted">
+                            控制推理篇幅，避免只思考无正文
+                          </span>
+                        </div>
+                        <select
+                          value={activeModelConfig.reasoningEffort || ''}
+                          onChange={(e) => {
+                            const val = e.target.value || undefined;
+                            updateActiveModelConfig(
+                              'reasoningEffort',
+                              val as 'low' | 'medium' | 'high' | undefined
+                            );
+                          }}
+                          className="w-full px-3 py-1.5 bg-bg-base border border-border rounded-lg text-xs text-text-primary focus:outline-none focus:border-accent"
+                        >
+                          <option value="">默认（不额外约束）</option>
+                          <option value="low">low · 少思考、优先正文</option>
+                          <option value="medium">medium · 均衡</option>
+                          <option value="high">high · 深推理但仍须出正文</option>
+                        </select>
                       </div>
                     </div>
 

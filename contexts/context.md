@@ -19,8 +19,11 @@
 - **Workspace Tools (模型工具)**：`read_workspace_file` 只收相对路径，纯对话不挂载。`write_workspace_file` 负责写盘。`.docx` 与文字型 PDF 抽取正文；`.xlsx` / `.xls` / `.doc` / `.pptx` 拒绝。流正常结束不是「传输中断」。空正文不要当成 API Key 错误。
 - **Abort & Rollback (中断与撤回机制)**：模型流式生成时可物理切断网络 (`req.destroy()`)，用户提问支持一键成对撤回并原样回填至输入框重发。
 - **Agent Tool Loop (工具多批续跑)**：读/写/MCP 同回合内单批最多 15 轮；打满后仍有工具需求时自动开下一批（默认最多 3 批），始终复用 `roundMessages` 保留已读正文。会话末尾写入「已读文件上下文保留」摘录，用户点「继续生成」时可少重读。
+- **Empty/Truncated Auto-Continue (空正文与额度截断续写)**：默认 `max_tokens=32768`（思考与正文共享）。若上游 `length`/`max_tokens`、正文为空或代码围栏未闭合，同回合自动续写最多 2 次（不新增用户气泡、续写请求不挂工具以迫使输出可见正文）；仍不足时保留「继续生成」按钮。
 - **Cross-platform Guardrails & Skill Audit (跨平台护栏与技能扫描)**：内置零外部依赖跨平台 Git 拦截护栏与 43 项技能静态健康扫描器，守卫工程资产与操作安全。
 - **Rich Document Pipeline (文档多模态与公式引擎)**：对齐学术论文与工业规范场景。主进程内置零依赖 OMML-to-LaTeX 转译器与媒体抽取器，前端集成 KaTeX 与 Canvas 视图，在右侧面板实现 Word/PDF 图文公式原生排版，并支持“一键引图入会话”无缝接入视觉大模型。
+- **Long Document Chunk Index (长文档分块索引)**：`@` 挂载长 PDF/DOCX/Markdown 时抽取正文并切片缓存至 `userData/doc-index/<docId>/`，本轮只注入目录卡片；模型用 `read_document_chunk(docId, chunkId)` 按块阅读，并用 `search_document_chunks` 关键词检索。预览栏可浏览/检索分块。索引抽取上限约 50 万字符；单块返回上限约 1.2 万字符。扫描件需先 OCR。
+- **Context Compact & Reasoning Dial**：历史消息自动压缩旧 carry/超长正文；设置可配 `maxTokens` 与思考强度（low/medium/high）。流式滑动静默默认 **600s**。
 
 ---
 

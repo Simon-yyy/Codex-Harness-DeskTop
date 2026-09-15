@@ -116,6 +116,64 @@ export interface ReadWorkspaceFileResult {
   permissionMode?: PermissionMode;
 }
 
+export interface DocumentChunkMeta {
+  id: string;
+  title: string;
+  summary: string;
+  charCount: number;
+}
+
+export interface IndexWorkspaceDocumentResult {
+  ok: boolean;
+  code?: string;
+  reason?: string;
+  hint?: string;
+  cached?: boolean;
+  docId?: string;
+  relativePath?: string;
+  title?: string;
+  chunkCount?: number;
+  totalChars?: number;
+  sourceTruncated?: boolean;
+  indexedAt?: number;
+  chunks?: DocumentChunkMeta[];
+}
+
+export interface ReadDocumentChunkResult {
+  ok: boolean;
+  code?: string;
+  reason?: string;
+  hint?: string;
+  docId?: string;
+  chunkId?: string;
+  title?: string;
+  relativePath?: string;
+  content?: string;
+  isTruncated?: boolean;
+  charCount?: number;
+}
+
+export interface SearchDocumentChunkHit {
+  chunkId: string;
+  title: string;
+  score: number;
+  matchedTerms: string[];
+  snippet: string;
+  charCount: number;
+}
+
+export interface SearchDocumentChunksResult {
+  ok: boolean;
+  code?: string;
+  reason?: string;
+  hint?: string;
+  docId?: string;
+  query?: string;
+  relativePath?: string;
+  hitCount?: number;
+  hits?: SearchDocumentChunkHit[];
+}
+
 export interface WriteWorkspaceFileResult {
   ok: boolean;
   code?: string;
@@ -272,6 +330,13 @@ export interface CodexDesktopAPI {
   getSecurityStatus?: () => Promise<SecurityStatus>;
   setPermissionMode?: (mode: PermissionMode) => Promise<{ ok: boolean; canceled?: boolean; error?: string; permissionMode: PermissionMode }>;
   readWorkspaceFile?: (relativePath: string) => Promise<ReadWorkspaceFileResult>;
+  indexWorkspaceDocument?: (relativePath: string) => Promise<IndexWorkspaceDocumentResult>;
+  readDocumentChunk?: (payload: { docId: string; chunkId: string }) => Promise<ReadDocumentChunkResult>;
+  searchDocumentChunks?: (payload: {
+    docId: string;
+    query: string;
+    limit?: number;
+  }) => Promise<SearchDocumentChunksResult>;
   extractDocxText?: (payload: { base64: string; name?: string }) => Promise<{
     ok: boolean;
     text?: string;

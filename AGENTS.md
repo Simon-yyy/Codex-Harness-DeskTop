@@ -92,7 +92,8 @@ codex-desktop/
 9. **模型工具与附件正文**：
    - `read_workspace_file` 只接受相对工作区根目录的 `relativePath`。`chat-only` 不挂载；只读、读写、全局信任可调用。写盘仍是 `write_workspace_file`，纯对话和只读都禁止写。
    - `.docx` 与文字型 PDF 必须抽取正文。不要把 Office/PDF 二进制当 UTF-8。`.xlsx` / `.xls` / `.doc` / `.pptx` 仍拒绝。扫描件 PDF 无文字层时必须失败，不要假装读到了正文。
-   - 流正常结束（对端关流、输出额度用尽、只回了工具调用）不会自动打出「传输中断」。只有静默超时、对端异常断开（EOF / hang up）或用户点停止才追加该提示。空正文不要归咎于 API Key。
+   - 长 PDF/DOCX/`@` 超长文本：索引分块后只挂目录；用 `read_document_chunk` / `search_document_chunks` 按块读与检索，禁止整篇灌 prompt。
+   - 流正常结束（对端关流、输出额度用尽、只回了工具调用）不会自动打出「传输中断」。只有静默超时（默认 600s）、对端异常断开（EOF / hang up）或用户点停止才追加该提示。空正文不要归咎于 API Key；额度用尽/空正文应自动续写。
 10. **跨平台原生环境与技能健康静态扫描 (Seam 8.5)**：
 
 - 所有随附执行脚本优先提供跨平台 Node.js 原生实现，严禁单向依赖特定操作系统 Shell（如 POSIX-only Bash / jq）；

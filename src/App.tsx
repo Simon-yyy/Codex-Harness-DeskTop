@@ -61,6 +61,35 @@ const EARLY_END_MARKER = '[输出提前结束]';
 const EARLY_END_NOTE_RE = /\n*\n⚠️\s*\[输出提前结束\][^\n]*(?:\n(?!\n)[^\n]*)*$/u;
 const CONTINUE_PROMPT =
   '请从上次中断处继续完成任务。优先使用对话中【已读文件上下文保留】与已有分析，不要无故重新通读已读文件；仅在缺失关键文件时再调用 read_workspace_file。不要重复已输出的内容。';
+/** 额度用尽/空正文时的同回合自动续写提示（不写入用户气泡，仅进 API messages） */
+const EMPTY_BODY_CONTINUE_PROMPT =
+  '【系统自动续写】上一轮输出额度已用尽，或仅完成内部思考、尚未写出对用户可见的正文。请立即输出可见正文与结论，禁止只重复思考过程；不要无故重新通读已读文件；从断点继续，不要重复已输出内容。';
+/** 空正文 / max_tokens 截断时同回合最多自动续写次数 */
+const MAX_EMPTY_BODY_CONTINUES = 2;
+/** 默认输出上限（含思考占用，对齐主流推理模型建议预留） */
+const DEFAULT_MAX_TOKENS = 32768;
+
+function isPlaceholderEmptyBody(content: string): boolean {
+  const t = String(content || '').trim();
+  if (!t) return true;
+  if (t.includes('未收到模型正文')) return true;
+  return false;
+}
+
+/** 额度截断、空正文或未闭合代码围栏时自动续写（对齐主流 Agent 对 max_tokens 的处理） */
+function shouldAutoContinueEmptyOrTruncated(
+  content: string,
+  finishReason: string,
+  hasPendingTools: boolean
+): boolean {
+  if (hasPendingTools) return false;
+  const fr = String(finishReason || '').toLowerCase();
+  if (fr === 'length' || fr === 'max_tokens') return true;
+  if (isPlaceholderEmptyBody(content)) return true;
+  const fences = (String(content || '').match(/```/g) || []).length;
+  if (fences % 2 === 1) return true;
+  return false;
+}
 
 /** 兼容模型误传 path / file */
 function pickRelativePath(args: Record<string, unknown> | null | undefined): string {
@@ -232,16 +261,99 @@ const READ_WORKSPACE_FILE_TOOL_ANTHROPIC = {
   input_schema: READ_WORKSPACE_FILE_TOOL_OPENAI.function.parameters,
 };
 
+/** 长文档分块阅读：目录已挂载时按 chunk 取正文，避免整篇进上下文 */
+const READ_DOCUMENT_CHUNK_TOOL_OPENAI = {
+  type: 'function' as const,
+  function: {
+    name: 'read_document_chunk',
+    description:
+      '读取已索引长文档的某一分块正文。参数 docId 与 chunkId 来自本轮【长文档已索引】目录。每次只读一块；需要多章时分多次调用。禁止在未调用本工具时声称已读完全文。',
+    parameters: {
+      type: 'object',
+      properties: {
+        docId: { type: 'string', description: '索引文档 ID' },
+        chunkId: { type: 'string', description: '分块 ID，如 0001' },
+      },
+      required: ['docId', 'chunkId'],
+    },
+  },
+};
+
+const READ_DOCUMENT_CHUNK_TOOL_ANTHROPIC = {
+  name: 'read_document_chunk',
+  description: READ_DOCUMENT_CHUNK_TOOL_OPENAI.function.description,
+  input_schema: READ_DOCUMENT_CHUNK_TOOL_OPENAI.function.parameters,
+};
+
+const SEARCH_DOCUMENT_CHUNKS_TOOL_OPENAI = {
+  type: 'function' as const,
+  function: {
+    name: 'search_document_chunks',
+    description:
+      '在已索引长文档中按关键词检索分块，返回命中 chunkId、标题与摘录。先检索再 read_document_chunk 精读。参数 docId 来自【长文档已索引】目录。',
+    parameters: {
+      type: 'object',
+      properties: {
+        docId: { type: 'string', description: '索引文档 ID' },
+        query: { type: 'string', description: '关键词，可用空格分隔多个词' },
+        limit: { type: 'number', description: '最多返回条数，默认 8' },
+      },
+      required: ['docId', 'query'],
+    },
+  },
+};
+
+const SEARCH_DOCUMENT_CHUNKS_TOOL_ANTHROPIC = {
+  name: 'search_document_chunks',
+  description: SEARCH_DOCUMENT_CHUNKS_TOOL_OPENAI.function.description,
+  input_schema: SEARCH_DOCUMENT_CHUNKS_TOOL_OPENAI.function.parameters,
+};
+
+/** 超过该字符数的 @ 挂载改为索引目录，不再整篇注入 */
+const DOC_INLINE_THRESHOLD_CHARS = 12000;
+
+function formatDocumentIndexCard(index: {
+  docId?: string;
+  relativePath?: string;
+  title?: string;
+  chunkCount?: number;
+  totalChars?: number;
+  sourceTruncated?: boolean;
+  chunks?: { id: string; title: string; summary: string; charCount: number }[];
+}): string {
+  const chunks = index.chunks || [];
+  const lines = chunks.slice(0, 80).map(
+    (c) => `- [${c.id}] ${c.title}（约 ${c.charCount} 字）: ${c.summary}`
+  );
+  const more =
+    chunks.length > 80 ? `\n… 另有 ${chunks.length - 80} 块未列出，请按需用 chunkId 读取` : '';
+  return (
+    `【长文档已索引（未整篇灌入上下文）】\n` +
+    `- 路径: ${index.relativePath || index.title || ''}\n` +
+    `- docId: ${index.docId}\n` +
+    `- 共 ${index.chunkCount || chunks.length} 块` +
+    (typeof index.totalChars === 'number' ? `，抽正文约 ${index.totalChars} 字` : '') +
+    (index.sourceTruncated ? '（源文抽取已截断）' : '') +
+    `\n请调用工具 read_document_chunk(docId, chunkId) 阅读具体章节；禁止声称已读全文。\n` +
+    lines.join('\n') +
+    more
+  );
+}
+
 function localWorkspaceToolsOpenAI(canRead: boolean, canWrite: boolean) {
   return [
-    ...(canRead ? [READ_WORKSPACE_FILE_TOOL_OPENAI] : []),
+    ...(canRead
+      ? [READ_WORKSPACE_FILE_TOOL_OPENAI, READ_DOCUMENT_CHUNK_TOOL_OPENAI, SEARCH_DOCUMENT_CHUNKS_TOOL_OPENAI]
+      : []),
     ...(canWrite ? [WRITE_WORKSPACE_FILE_TOOL_OPENAI] : []),
   ];
 }
 
 function localWorkspaceToolsAnthropic(canRead: boolean, canWrite: boolean) {
   return [
-    ...(canRead ? [READ_WORKSPACE_FILE_TOOL_ANTHROPIC] : []),
+    ...(canRead
+      ? [READ_WORKSPACE_FILE_TOOL_ANTHROPIC, READ_DOCUMENT_CHUNK_TOOL_ANTHROPIC, SEARCH_DOCUMENT_CHUNKS_TOOL_ANTHROPIC]
+      : []),
     ...(canWrite ? [WRITE_WORKSPACE_FILE_TOOL_ANTHROPIC] : []),
   ];
 }
@@ -479,7 +591,51 @@ const TOOL_CARRY_MAX_FILES = 8;
 const TOOL_CARRY_MARKER = '<!-- CODEX_TOOL_CARRY -->';
 
 function isAgentToolName(name: string) {
-  return name === 'read_workspace_file' || name === 'write_workspace_file' || name.startsWith('mcp__');
+  return (
+    name === 'read_workspace_file' ||
+    name === 'read_document_chunk' ||
+    name === 'search_document_chunks' ||
+    name === 'write_workspace_file' ||
+    name.startsWith('mcp__')
+  );
+}
+
+/** 压缩较旧历史，降低长论文/多轮续写对上下文窗口的挤占 */
+function compressHistoryContent(role: string, content: string, indexFromEnd: number): string {
+  let c = String(content || '');
+  if (role === 'assistant' && indexFromEnd > 1) {
+    c = c.replace(/\n*---\n<!-- CODEX_TOOL_CARRY -->[\s\S]*$/u, '');
+    c = c.replace(/\n*---\n\*\*🔧 工具执行结果\*\*[\s\S]*$/u, '');
+  }
+  if (role === 'assistant' && indexFromEnd > 2 && c.length > 6000) {
+    c = `${c.slice(0, 3000)}\n\n…[历史正文已压缩]…\n\n${c.slice(-1500)}`;
+  }
+  if (role === 'user' && indexFromEnd > 2 && c.length > 8000) {
+    const marker = '【长文档已索引';
+    const idx = c.indexOf(marker);
+    if (idx >= 0) {
+      const head = c.slice(0, Math.min(1200, idx));
+      const card = c.slice(idx, idx + 2800);
+      c = `${head}\n${card}\n…[更早挂载正文已压缩；请用 search_document_chunks / read_document_chunk]`;
+    } else {
+      c = `${c.slice(0, 3500)}\n…[历史用户消息已压缩]…\n${c.slice(-1200)}`;
+    }
+  }
+  return c.trim();
+}
+
+function reasoningEffortSystemHint(effort?: string): string {
+  const e = String(effort || '').toLowerCase();
+  if (e === 'low' || e === 'minimal') {
+    return '【思考强度: low】请尽量缩短内部思考，把输出额度优先留给对用户可见的正文与结论。';
+  }
+  if (e === 'high' || e === 'xhigh') {
+    return '【思考强度: high】允许充分推理，但仍必须在额度内产出完整可见正文，禁止只思考不回答。';
+  }
+  if (e === 'medium') {
+    return '【思考强度: medium】平衡思考与正文；若接近输出上限，优先完成可见结论。';
+  }
+  return '';
 }
 
 /** 从本轮工具结果中收集读盘正文，供同会话续写与用户点「继续」时复用 */
@@ -489,18 +645,35 @@ function collectReadCarryEntries(
   sink: Map<string, string>
 ) {
   for (const r of results) {
-    if (r.name !== 'read_workspace_file') continue;
-    const body = typeof r.content === 'string' ? r.content : '';
-    if (!body || body.startsWith('{"ok":false')) continue;
-    const tc = calls.find((c) => c.id === r.id);
-    let rel = '';
-    try {
-      rel = pickRelativePath(JSON.parse(tc?.arguments || '{}'));
-    } catch {
-      rel = '';
+    if (r.name === 'read_workspace_file') {
+      const body = typeof r.content === 'string' ? r.content : '';
+      if (!body || body.startsWith('{"ok":false')) continue;
+      const tc = calls.find((c) => c.id === r.id);
+      let rel = '';
+      try {
+        rel = pickRelativePath(JSON.parse(tc?.arguments || '{}'));
+      } catch {
+        rel = '';
+      }
+      if (!rel) continue;
+      sink.set(rel, body.slice(0, TOOL_CARRY_CHARS_PER_FILE));
+      continue;
     }
-    if (!rel) continue;
-    sink.set(rel, body.slice(0, TOOL_CARRY_CHARS_PER_FILE));
+    if (r.name === 'read_document_chunk') {
+      const body = typeof r.content === 'string' ? r.content : '';
+      if (!body || body.startsWith('{"ok":false')) continue;
+      const tc = calls.find((c) => c.id === r.id);
+      let key = `chunk:${r.id}`;
+      try {
+        const args = JSON.parse(tc?.arguments || '{}');
+        const docId = String(args.docId || '').trim();
+        const chunkId = String(args.chunkId || args.id || '').trim();
+        if (docId && chunkId) key = `${docId}#${chunkId}`;
+      } catch {
+        /* keep key */
+      }
+      sink.set(key, body.slice(0, TOOL_CARRY_CHARS_PER_FILE));
+    }
   }
 }
 
@@ -539,6 +712,140 @@ function connectorToolsToAnthropic(tools: ConnectorToolInfo[]) {
     }));
 }
 
+async function executeReadDocumentChunkTools(
+  toolCalls: CodexToolCall[]
+): Promise<{ lines: string[]; results: { id: string; name: string; content: string }[] }> {
+  const lines: string[] = [];
+  const results: { id: string; name: string; content: string }[] = [];
+  for (let i = 0; i < toolCalls.length; i++) {
+    const tc = toolCalls[i];
+    const callId = tc.id || `call_${i}_${Date.now()}`;
+    if (tc.name !== 'read_document_chunk') {
+      const msg = `⏭ 忽略未知工具 \`${tc.name}\``;
+      lines.push(`- ${msg}`);
+      results.push({ id: callId, name: tc.name, content: JSON.stringify({ ok: false, error: msg }) });
+      continue;
+    }
+    let args: { docId?: string; chunkId?: string; id?: string } = {};
+    try {
+      args = JSON.parse(tc.arguments || '{}');
+    } catch {
+      const msg = 'read_document_chunk 参数 JSON 解析失败';
+      lines.push(`- ❌ ${msg}`);
+      results.push({ id: callId, name: tc.name, content: JSON.stringify({ ok: false, error: msg }) });
+      continue;
+    }
+    const docId = String(args.docId || '').trim();
+    const chunkId = String(args.chunkId || args.id || '').trim();
+    if (!docId || !chunkId) {
+      const msg = 'read_document_chunk 缺少 docId 或 chunkId';
+      lines.push(`- ❌ ${msg}`);
+      results.push({ id: callId, name: tc.name, content: JSON.stringify({ ok: false, error: msg }) });
+      continue;
+    }
+    if (!window.codexDesktop?.readDocumentChunk) {
+      const msg = '当前环境不支持文档分块读取';
+      lines.push(`- ❌ ${msg}`);
+      results.push({ id: callId, name: tc.name, content: JSON.stringify({ ok: false, error: msg }) });
+      continue;
+    }
+    try {
+      const res = await window.codexDesktop.readDocumentChunk({ docId, chunkId });
+      if (res?.ok && typeof res.content === 'string') {
+        const label = res.title || chunkId;
+        lines.push(`- ✅ 已读取分块 \`${docId}#${res.chunkId || chunkId}\`（${label}）${res.isTruncated ? '（已截断）' : ''}`);
+        results.push({
+          id: callId,
+          name: tc.name,
+          content: `【文档分块 ${res.chunkId || chunkId} · ${label}】\n${res.content}`,
+        });
+      } else {
+        const err = res?.reason || res?.code || '读取分块失败';
+        lines.push(`- ❌ 读取分块失败 \`${docId}#${chunkId}\`: ${err}`);
+        results.push({ id: callId, name: tc.name, content: JSON.stringify({ ok: false, docId, chunkId, error: err }) });
+      }
+    } catch (e: any) {
+      const err = e?.message || String(e);
+      lines.push(`- ❌ 读取分块异常 \`${docId}#${chunkId}\`: ${err}`);
+      results.push({ id: callId, name: tc.name, content: JSON.stringify({ ok: false, docId, chunkId, error: err }) });
+    }
+  }
+  return { lines, results };
+}
+
+async function executeSearchDocumentChunksTools(
+  toolCalls: CodexToolCall[]
+): Promise<{ lines: string[]; results: { id: string; name: string; content: string }[] }> {
+  const lines: string[] = [];
+  const results: { id: string; name: string; content: string }[] = [];
+  for (let i = 0; i < toolCalls.length; i++) {
+    const tc = toolCalls[i];
+    const callId = tc.id || `call_${i}_${Date.now()}`;
+    if (tc.name !== 'search_document_chunks') {
+      const msg = `⏭ 忽略未知工具 \`${tc.name}\``;
+      lines.push(`- ${msg}`);
+      results.push({ id: callId, name: tc.name, content: JSON.stringify({ ok: false, error: msg }) });
+      continue;
+    }
+    let args: { docId?: string; query?: string; limit?: number } = {};
+    try {
+      args = JSON.parse(tc.arguments || '{}');
+    } catch {
+      const msg = 'search_document_chunks 参数 JSON 解析失败';
+      lines.push(`- ❌ ${msg}`);
+      results.push({ id: callId, name: tc.name, content: JSON.stringify({ ok: false, error: msg }) });
+      continue;
+    }
+    const docId = String(args.docId || '').trim();
+    const query = String(args.query || '').trim();
+    if (!docId || !query) {
+      const msg = 'search_document_chunks 缺少 docId 或 query';
+      lines.push(`- ❌ ${msg}`);
+      results.push({ id: callId, name: tc.name, content: JSON.stringify({ ok: false, error: msg }) });
+      continue;
+    }
+    if (!window.codexDesktop?.searchDocumentChunks) {
+      const msg = '当前环境不支持文档分块检索';
+      lines.push(`- ❌ ${msg}`);
+      results.push({ id: callId, name: tc.name, content: JSON.stringify({ ok: false, error: msg }) });
+      continue;
+    }
+    try {
+      const res = await window.codexDesktop.searchDocumentChunks({
+        docId,
+        query,
+        limit: typeof args.limit === 'number' ? args.limit : 8,
+      });
+      if (res?.ok) {
+        const hits = res.hits || [];
+        lines.push(`- ✅ 文档检索 \`${docId}\`「${query}」命中 ${res.hitCount ?? hits.length} 块`);
+        const body = hits.length
+          ? hits
+              .map(
+                (h, idx) =>
+                  `${idx + 1}. [${h.chunkId}] ${h.title} (score=${h.score})\n   ${h.snippet}`
+              )
+              .join('\n')
+          : '无命中。可换关键词或直接按目录 read_document_chunk。';
+        results.push({
+          id: callId,
+          name: tc.name,
+          content: `【文档检索 ${docId} · ${query}】\n${body}`,
+        });
+      } else {
+        const err = res?.reason || res?.code || '检索失败';
+        lines.push(`- ❌ 文档检索失败: ${err}`);
+        results.push({ id: callId, name: tc.name, content: JSON.stringify({ ok: false, docId, query, error: err }) });
+      }
+    } catch (e: any) {
+      const err = e?.message || String(e);
+      lines.push(`- ❌ 文档检索异常: ${err}`);
+      results.push({ id: callId, name: tc.name, content: JSON.stringify({ ok: false, docId, query, error: err }) });
+    }
+  }
+  return { lines, results };
+}
+
 async function executeAgentTools(
   toolCalls: CodexToolCall[],
   onFileWritten?: (path: string) => void
@@ -552,6 +859,20 @@ async function executeAgentTools(
 
     if (tc.name === 'read_workspace_file') {
       const one = await executeReadWorkspaceTools([{ ...tc, id: callId }]);
+      lines.push(...one.lines);
+      results.push(...one.results);
+      continue;
+    }
+
+    if (tc.name === 'read_document_chunk') {
+      const one = await executeReadDocumentChunkTools([{ ...tc, id: callId }]);
+      lines.push(...one.lines);
+      results.push(...one.results);
+      continue;
+    }
+
+    if (tc.name === 'search_document_chunks') {
+      const one = await executeSearchDocumentChunksTools([{ ...tc, id: callId }]);
       lines.push(...one.lines);
       results.push(...one.results);
       continue;
@@ -1077,7 +1398,7 @@ export const App: React.FC = () => {
 
         let modeTitle = '📖 工作区只读模式 (Workspace Read-Only)';
         let modeRule =
-          '你当前处于工作区只读安全沙箱。工作区大纲只供定位路径，不是文件正文。需要查看文件时调用工具 `read_workspace_file`（参数 relativePath，相对工作区根目录），结果会回到本轮对话。禁止声称“无法读取文件”，也禁止只输出“让我读取...”后结束而不调用工具。用户本轮已用 @ 挂载的文件已在消息中，不必再读同一路径。\n' +
+          '你当前处于工作区只读安全沙箱。工作区大纲只供定位路径，不是文件正文。需要查看文件时调用工具 `read_workspace_file`（参数 relativePath，相对工作区根目录），结果会回到本轮对话。长 PDF/DOCX 经 @ 挂载后通常只注入分块目录，请用 `read_document_chunk`(docId, chunkId) 按块阅读，禁止声称已读全文。禁止只输出“让我读取...”后结束而不调用工具。用户本轮已用 @ 挂载的短文件已在消息中，不必再读同一路径。\n' +
           '【工具边界】禁止调用 `write_workspace_file` 及任何本地写盘标记（filepath / @@@write_file）。若会话已挂载 MCP 连接器工具（名称以 `mcp__` 开头），仅可用于远程只读检索/查询，不得据此改写本地工程文件。';
         if (permissionMode === 'workspace-readwrite') {
           modeTitle = '✍️ 工作区读写模式 (Workspace Read/Write - 自动修改工程落盘)';
@@ -1108,11 +1429,19 @@ export const App: React.FC = () => {
         });
       }
 
+      const modelCfgForPrompt = provider.modelConfigs?.find(
+        (c) => c.name.toLowerCase() === selectedModel.toLowerCase()
+      );
+      const effortHint = reasoningEffortSystemHint(modelCfgForPrompt?.reasoningEffort);
+      if (effortHint) {
+        contextMessages.push({ role: 'system', content: effortHint });
+      }
+
       // 清洗并加载历史消息 (过滤空 content、截断占位符与历史推诿狡辩话术，阻断大模型多轮推理自洽抬杠链)
-      (currentSession.messages || [])
+      const historySlice = (currentSession.messages || [])
         .slice(-10)
-        .filter(m => m.content && typeof m.content === 'string' && m.content.trim().length > 0)
-        .forEach(m => {
+        .filter(m => m.content && typeof m.content === 'string' && m.content.trim().length > 0);
+      historySlice.forEach((m, histIdx) => {
           let cleanedContent = m.content.trim();
           if (m.role === 'assistant') {
             // 清洗阶段 1: 过滤等待交互的截断词
@@ -1138,6 +1467,8 @@ export const App: React.FC = () => {
               .replace(/(?:\(若工作区没有[^\n]*\)[：:]?\s*)/gi, '')
               .trim();
           }
+          const indexFromEnd = historySlice.length - 1 - histIdx;
+          cleanedContent = compressHistoryContent(m.role, cleanedContent, indexFromEnd);
           if (cleanedContent) {
             contextMessages.push({
               role: m.role,
@@ -1176,8 +1507,45 @@ export const App: React.FC = () => {
             continue;
           }
           try {
+            // 长 PDF/DOCX/文本：索引分块，只挂目录，避免整篇进上下文
+            const wantIndex =
+              !!window.codexDesktop.indexWorkspaceDocument &&
+              /\.(pdf|docx|md|txt|markdown)$/i.test(rel);
+            if (wantIndex) {
+              const indexed = await window.codexDesktop.indexWorkspaceDocument(rel);
+              if (indexed?.ok && indexed.docId && Array.isArray(indexed.chunks) && indexed.chunks.length > 0) {
+                const shouldUseIndex =
+                  (indexed.totalChars || 0) >= DOC_INLINE_THRESHOLD_CHARS ||
+                  indexed.chunks.length > 1 ||
+                  /\.(pdf|docx)$/i.test(rel);
+                if (shouldUseIndex) {
+                  attachedContents.push(formatDocumentIndexCard(indexed));
+                  attachedCount++;
+                  continue;
+                }
+              } else if (indexed && !indexed.ok && /\.(pdf|docx)$/i.test(rel)) {
+                attachedContents.push(
+                  `【文档索引失败: ${rel}】${indexed.reason || indexed.code || '未知错误'}${indexed.hint ? `；${indexed.hint}` : ''}`
+                );
+                attachedCount++;
+                continue;
+              }
+            }
+
             const fileRes = await window.codexDesktop.readWorkspaceFile(rel);
             if (fileRes.ok && fileRes.content) {
+              // 短文本若仍超阈值，也改走索引（若可用）
+              if (
+                fileRes.content.length >= DOC_INLINE_THRESHOLD_CHARS &&
+                window.codexDesktop.indexWorkspaceDocument
+              ) {
+                const indexed = await window.codexDesktop.indexWorkspaceDocument(rel);
+                if (indexed?.ok && indexed.docId && indexed.chunks?.length) {
+                  attachedContents.push(formatDocumentIndexCard(indexed));
+                  attachedCount++;
+                  continue;
+                }
+              }
               const label = /\.(docx|pdf)$/i.test(rel)
                 ? `【文件挂载: ${rel}（已抽取正文）】`
                 : `【文件挂载: ${rel}】`;
@@ -1307,13 +1675,13 @@ export const App: React.FC = () => {
         let endpoint = effectiveBaseUrl;
         let body: any = {};
 
-        // 长文档完整落盘：默认 16384；若模型配置了 maxTokens 则采用（夹在 4096~128000）
+        // 长文档 + 推理模型：默认 32768（思考与正文共享额度）；模型配置 maxTokens 优先（夹在 4096~128000）
         const modelCfg = provider.modelConfigs?.find(
           (c) => c.name.toLowerCase() === selectedModel.toLowerCase()
         );
         const effectiveMaxTokens = Math.max(
           4096,
-          Math.min(128000, typeof modelCfg?.maxTokens === 'number' && modelCfg.maxTokens > 0 ? modelCfg.maxTokens : 16384)
+          Math.min(128000, typeof modelCfg?.maxTokens === 'number' && modelCfg.maxTokens > 0 ? modelCfg.maxTokens : DEFAULT_MAX_TOKENS)
         );
 
         if (effectiveProtocol === 'anthropic') {
@@ -1329,7 +1697,10 @@ export const App: React.FC = () => {
             stream: true,
             messages: contextMessages.filter(m => m.role !== 'system'),
             system: systemPrompts || undefined,
-            ...(aTools.length ? { tools: aTools } : {})
+            ...(aTools.length ? { tools: aTools } : {}),
+            ...(modelCfgForPrompt?.reasoningEffort
+              ? { thinking: { type: 'enabled' }, reasoning_effort: modelCfgForPrompt.reasoningEffort }
+              : {}),
           };
         } else if (effectiveProtocol === 'ollama') {
           if (!endpoint.endsWith('/chat/completions') && !endpoint.endsWith('/api/chat')) {
@@ -1345,7 +1716,10 @@ export const App: React.FC = () => {
             max_tokens: effectiveMaxTokens,
             messages: contextMessages,
             stream_options: { include_usage: true },
-            ...(oTools.length ? { tools: oTools, tool_choice: 'auto' } : {})
+            ...(oTools.length ? { tools: oTools, tool_choice: 'auto' } : {}),
+            ...(modelCfgForPrompt?.reasoningEffort
+              ? { reasoning_effort: modelCfgForPrompt.reasoningEffort }
+              : {}),
           };
         } else {
           // OpenAI 兼容协议 (支持 DeepSeek, GLM, OpenAI 等)
@@ -1362,7 +1736,10 @@ export const App: React.FC = () => {
             max_tokens: effectiveMaxTokens,
             messages: contextMessages,
             stream_options: { include_usage: true },
-            ...(oTools.length ? { tools: oTools, tool_choice: 'auto' } : {})
+            ...(oTools.length ? { tools: oTools, tool_choice: 'auto' } : {}),
+            ...(modelCfgForPrompt?.reasoningEffort
+              ? { reasoning_effort: modelCfgForPrompt.reasoningEffort }
+              : {}),
           };
         }
 
@@ -1460,14 +1837,17 @@ export const App: React.FC = () => {
           }
 
           // 工具调用常只回 tool_calls、正文为空。此时不要写成鉴权失败，等工具续跑后再显示正文或执行结果。
+          // 仅有 thinking、无正文时也不要盖吓人占位（随后自动续写会补正文）。
           const hasPendingAgentTools = collectedToolCalls.some((t) => isAgentToolName(t.name));
-          const emptyReplyFallback = hasPendingAgentTools
+          const hasVisibleContent = !!(streamedContentAcc || response?.content || '').trim();
+          const hasThinkingOnly = !hasVisibleContent && !!(response?.thinking || '').trim();
+          const emptyReplyFallback = hasPendingAgentTools || hasThinkingOnly
             ? ''
             : '⚠️ 未收到模型正文。接口已返回，但这轮没有可显示的文本，不是 API Key 错误。';
           updateLastMessageInCurrentSession(prev => ({
             ...prev,
             content: prev.content || response?.content || emptyReplyFallback,
-            thinking: response?.thinking || prev.thinking || (hasPendingAgentTools ? '正在执行工具...' : '任务思考已完成。')
+            thinking: response?.thinking || prev.thinking || (hasPendingAgentTools ? '正在执行工具...' : (hasThinkingOnly ? (prev.thinking || '内部思考已完成，准备输出正文...') : '任务思考已完成。'))
           }));
 
           // 读盘 / 写盘 / MCP：执行工具 + @@@write_file 标记兜底 + 同回合多批续跑（保留 roundMessages）
@@ -1913,6 +2293,165 @@ export const App: React.FC = () => {
                 earlyEnded: early || Boolean(prev.earlyEnded),
               };
             });
+
+            // 额度用尽 / 空正文：同回合自动续写（对齐主流 Agent；不新增用户气泡、不挂工具以迫使输出正文）
+            {
+              let continueRound = 0;
+              let visibleForContinue = (streamedContentAcc || lastAssistantText || response?.content || '')
+                .replace(EARLY_END_NOTE_RE, '')
+                .trim();
+              if (visibleForContinue.includes('未收到模型正文')) visibleForContinue = '';
+
+              while (
+                continueRound < MAX_EMPTY_BODY_CONTINUES &&
+                activeStreamIdRef.current &&
+                lastApiToolCalls.length === 0 &&
+                shouldAutoContinueEmptyOrTruncated(visibleForContinue, streamFinishReason, false)
+              ) {
+                continueRound += 1;
+                updateLastMessageInCurrentSession((prev) => ({
+                  ...prev,
+                  thinking: `${prev.thinking || ''}\n🚀 检测到输出额度用尽或正文为空，自动续写第 ${continueRound}/${MAX_EMPTY_BODY_CONTINUES} 次...`.trim(),
+                  earlyEnded: false,
+                  content: isPlaceholderEmptyBody(prev.content || '') ? '' : (prev.content || ''),
+                }));
+
+                const assistantPayload =
+                  visibleForContinue || '（上一轮仅完成内部思考，尚未输出可见正文。）';
+
+                let contMessages: any[];
+                if (effectiveProtocol === 'anthropic') {
+                  contMessages = [
+                    ...contextMessages.filter((m) => m.role !== 'system'),
+                    { role: 'assistant', content: [{ type: 'text', text: assistantPayload }] },
+                    { role: 'user', content: EMPTY_BODY_CONTINUE_PROMPT },
+                  ];
+                } else {
+                  contMessages = [
+                    ...contextMessages,
+                    { role: 'assistant', content: assistantPayload },
+                    { role: 'user', content: EMPTY_BODY_CONTINUE_PROMPT },
+                  ];
+                }
+
+                const emptyContStreamId = `${streamId}_empty_cont_${continueRound}`;
+                activeStreamIdRef.current = emptyContStreamId;
+                let emptyContAcc = '';
+
+                if (unsubscribeStream) {
+                  unsubscribeStream();
+                  unsubscribeStream = null;
+                }
+                if (window.codexDesktop?.onLlmStreamChunk) {
+                  unsubscribeStream = window.codexDesktop.onLlmStreamChunk((data) => {
+                    if (data.streamId !== emptyContStreamId) return;
+                    if (data.contentDelta) {
+                      emptyContAcc += data.contentDelta;
+                      updateLastMessageInCurrentSession((prev) => {
+                        const base = isPlaceholderEmptyBody(prev.content || '') ? '' : (prev.content || '');
+                        return { ...prev, content: base + data.contentDelta };
+                      });
+                    }
+                    if (data.thinkingDelta) {
+                      updateLastMessageInCurrentSession((prev) => ({
+                        ...prev,
+                        thinking: (prev.thinking || '') + data.thinkingDelta,
+                      }));
+                    }
+                    if (data.isDone && data.finishReason) {
+                      streamFinishReason = String(data.finishReason);
+                    }
+                  });
+                }
+
+                let emptyEndpoint = effectiveBaseUrl;
+                let emptyBody: any = {};
+                if (effectiveProtocol === 'anthropic') {
+                  if (!emptyEndpoint.endsWith('/messages')) emptyEndpoint += '/v1/messages';
+                  const systemPrompts = contextMessages
+                    .filter((m) => m.role === 'system')
+                    .map((m) => m.content)
+                    .join('\n\n');
+                  emptyBody = {
+                    model: selectedModel,
+                    max_tokens: effectiveMaxTokens,
+                    stream: true,
+                    messages: contMessages,
+                    system: systemPrompts || undefined,
+                  };
+                } else {
+                  if (effectiveProtocol === 'ollama') {
+                    if (!emptyEndpoint.endsWith('/chat/completions') && !emptyEndpoint.endsWith('/api/chat')) {
+                      emptyEndpoint += '/v1/chat/completions';
+                    }
+                  } else if (!emptyEndpoint.endsWith('/chat/completions')) {
+                    emptyEndpoint += '/chat/completions';
+                  }
+                  emptyBody = {
+                    model: selectedModel,
+                    stream: true,
+                    max_tokens: effectiveMaxTokens,
+                    messages: contMessages,
+                    stream_options: { include_usage: true },
+                  };
+                }
+
+                const emptyRes: any = await window.codexDesktop.callLlmApi({
+                  endpoint: emptyEndpoint,
+                  apiKey: effectiveApiKey,
+                  body: emptyBody,
+                  stream: true,
+                  streamId: emptyContStreamId,
+                  timeout: matchedModel?.timeoutSeconds,
+                });
+
+                if (!emptyRes?.ok) break;
+
+                const emptyParsed = safeParseLlmBody(emptyRes.body);
+                let extraText = emptyContAcc;
+                if (!extraText) {
+                  if (effectiveProtocol === 'anthropic') {
+                    const blocks = Array.isArray(emptyParsed.content) ? emptyParsed.content : [];
+                    extraText =
+                      blocks.map((c: any) => c.text || '').join('') ||
+                      emptyParsed.choices?.[0]?.message?.content ||
+                      '';
+                    if (emptyParsed.stop_reason) streamFinishReason = String(emptyParsed.stop_reason);
+                  } else {
+                    const choice = emptyParsed.choices?.[0];
+                    extraText = choice?.message?.content || '';
+                    if (choice?.finish_reason) streamFinishReason = String(choice.finish_reason);
+                  }
+                  if (extraText) {
+                    updateLastMessageInCurrentSession((prev) => {
+                      const base = isPlaceholderEmptyBody(prev.content || '') ? '' : (prev.content || '');
+                      return { ...prev, content: `${base}${extraText}` };
+                    });
+                  }
+                } else if (effectiveProtocol === 'anthropic' && emptyParsed.stop_reason) {
+                  streamFinishReason = String(emptyParsed.stop_reason);
+                } else if (emptyParsed.choices?.[0]?.finish_reason) {
+                  streamFinishReason = String(emptyParsed.choices[0].finish_reason);
+                }
+
+                visibleForContinue = `${visibleForContinue}${extraText || ''}`.trim();
+                streamedContentAcc = visibleForContinue;
+              }
+
+              // 自动续写结束后若仍截断/空正文，保留 earlyEnded 供手动「继续生成」
+              updateLastMessageInCurrentSession((prev) => {
+                const body = (prev.content || '').replace(EARLY_END_NOTE_RE, '').trim();
+                const stillEarly =
+                  lastApiToolCalls.length > 0 ||
+                  shouldAutoContinueEmptyOrTruncated(body, streamFinishReason, false) ||
+                  looksLikeEarlyEnd(body, streamFinishReason);
+                return {
+                  ...prev,
+                  content: body,
+                  earlyEnded: stillEarly,
+                };
+              });
+            }
           }
         } else {
           let errText = rawRes?.body;

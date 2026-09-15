@@ -118,7 +118,8 @@ export function normalizeAndDeduplicateProviders(rawList: any[]): ProviderPreset
         apiKey: exist?.apiKey,
         timeoutSeconds: exist?.timeoutSeconds,
         temperature: exist?.temperature,
-        maxTokens: exist?.maxTokens
+        maxTokens: exist?.maxTokens,
+        reasoningEffort: exist?.reasoningEffort
       };
     });
 

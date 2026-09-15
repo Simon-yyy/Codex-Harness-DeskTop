@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { X, Layers, Code, Copy, Check, CornerDownLeft, GitCompare, RotateCcw, BookOpen, Loader2, Maximize2 } from 'lucide-react';
-import { ReadRichDocumentResult } from '../../types/electron';
+import { X, Layers, Code, Copy, Check, CornerDownLeft, GitCompare, RotateCcw, BookOpen, Loader2, Maximize2, ListTree } from 'lucide-react';
+import { ReadRichDocumentResult, IndexWorkspaceDocumentResult, DocumentChunkMeta } from '../../types/electron';
 import { DocxReader } from './DocxReader';
 import { PdfReader } from './PdfReader';
 
@@ -124,6 +124,13 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
   const [richLoading, setRichLoading] = useState(false);
   const [richDocData, setRichDocData] = useState<ReadRichDocumentResult | null>(null);
   const [lightboxImg, setLightboxImg] = useState<{ src: string; name?: string } | null>(null);
+  const [docIndex, setDocIndex] = useState<IndexWorkspaceDocumentResult | null>(null);
+  const [indexLoading, setIndexLoading] = useState(false);
+  const [activeChunkId, setActiveChunkId] = useState<string | null>(null);
+  const [chunkPreview, setChunkPreview] = useState<string>('');
+  const [chunkLoading, setChunkLoading] = useState(false);
+  const [chunkQuery, setChunkQuery] = useState('');
+  const [searchHits, setSearchHits] = useState<DocumentChunkMeta[] | null>(null);
 
   // ↔️ 右侧预览栏左缘拖拽拉伸 (范围 360px ~ 900px，默认 420，持久化保存)
   const PANEL_MIN_W = 360;
@@ -201,6 +208,39 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
       setViewMode('code');
     }
   }, [isOpen, filePath, isRichDoc]);
+
+  // 长文档：自动建立/读取分块索引，供侧栏浏览与检索
+  useEffect(() => {
+    if (!isOpen || !filePath || !window.codexDesktop?.indexWorkspaceDocument) {
+      setDocIndex(null);
+      setActiveChunkId(null);
+      setChunkPreview('');
+      setSearchHits(null);
+      return;
+    }
+    if (!/\.(pdf|docx|md|txt|markdown)$/i.test(filePath)) {
+      setDocIndex(null);
+      return;
+    }
+    let cancelled = false;
+    setIndexLoading(true);
+    window.codexDesktop
+      .indexWorkspaceDocument(filePath)
+      .then((res) => {
+        if (cancelled) return;
+        if (res?.ok && res.docId) setDocIndex(res);
+        else setDocIndex(null);
+      })
+      .catch(() => {
+        if (!cancelled) setDocIndex(null);
+      })
+      .finally(() => {
+        if (!cancelled) setIndexLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, filePath]);
 
   // 当备份存在时，自动提供 Diff 视角
   const diffResult = useMemo(() => {
@@ -398,6 +438,114 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
               </div>
             )}
 
+            {/* 长文档分块目录 */}
+            {(indexLoading || (docIndex?.chunks && docIndex.chunks.length > 0)) && (
+              <div className="border-b border-border bg-bg-card/50 px-3 py-2 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 text-[11px] font-semibold text-text-primary">
+                    <ListTree size={12} className="text-accent" />
+                    <span>
+                      分块索引
+                      {docIndex?.chunkCount ? ` · ${docIndex.chunkCount} 块` : ''}
+                      {docIndex?.sourceTruncated ? ' · 源文已截断' : ''}
+                    </span>
+                  </div>
+                  {indexLoading && <Loader2 size={12} className="animate-spin text-text-muted" />}
+                </div>
+                {docIndex?.docId && (
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={chunkQuery}
+                      onChange={(e) => setChunkQuery(e.target.value)}
+                      placeholder="关键词检索分块…"
+                      className="flex-1 min-w-0 px-2 py-1 rounded border border-border bg-bg-base text-[10px] text-text-primary outline-none focus:border-accent"
+                    />
+                    <button
+                      type="button"
+                      className="px-2 py-1 rounded text-[10px] bg-accent/15 text-accent border border-accent/30 hover:bg-accent/25"
+                      onClick={async () => {
+                        if (!docIndex.docId || !chunkQuery.trim() || !window.codexDesktop?.searchDocumentChunks) {
+                          setSearchHits(null);
+                          return;
+                        }
+                        const res = await window.codexDesktop.searchDocumentChunks({
+                          docId: docIndex.docId,
+                          query: chunkQuery.trim(),
+                          limit: 12,
+                        });
+                        if (res?.ok && res.hits?.length) {
+                          setSearchHits(
+                            res.hits.map((h) => ({
+                              id: h.chunkId,
+                              title: h.title,
+                              summary: h.snippet,
+                              charCount: h.charCount,
+                            }))
+                          );
+                        } else {
+                          setSearchHits([]);
+                        }
+                      }}
+                    >
+                      检索
+                    </button>
+                    {searchHits && (
+                      <button
+                        type="button"
+                        className="px-1.5 py-1 text-[10px] text-text-muted hover:text-text-primary"
+                        onClick={() => setSearchHits(null)}
+                      >
+                        清除
+                      </button>
+                    )}
+                  </div>
+                )}
+                <div className="max-h-36 overflow-y-auto space-y-0.5 pr-0.5">
+                  {(searchHits || docIndex?.chunks || []).slice(0, 60).map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={async () => {
+                        if (!docIndex?.docId || !window.codexDesktop?.readDocumentChunk) return;
+                        setActiveChunkId(c.id);
+                        setChunkLoading(true);
+                        try {
+                          const res = await window.codexDesktop.readDocumentChunk({
+                            docId: docIndex.docId,
+                            chunkId: c.id,
+                          });
+                          setChunkPreview(res?.ok ? res.content || '' : res?.reason || '读取失败');
+                          setViewMode('code');
+                        } finally {
+                          setChunkLoading(false);
+                        }
+                      }}
+                      className={`w-full text-left px-1.5 py-1 rounded text-[10px] leading-snug transition-colors ${
+                        activeChunkId === c.id
+                          ? 'bg-accent/20 text-accent border border-accent/30'
+                          : 'hover:bg-bg-hover text-text-secondary border border-transparent'
+                      }`}
+                      title={c.summary}
+                    >
+                      <span className="font-mono text-text-muted mr-1">[{c.id}]</span>
+                      <span className="font-medium">{c.title}</span>
+                      <span className="text-text-muted ml-1">· {c.charCount}字</span>
+                    </button>
+                  ))}
+                  {searchHits && searchHits.length === 0 && (
+                    <p className="text-[10px] text-text-muted px-1">无命中，可换关键词或浏览完整目录</p>
+                  )}
+                </div>
+                {chunkLoading && (
+                  <div className="flex items-center gap-1 text-[10px] text-text-muted">
+                    <Loader2 size={10} className="animate-spin" />
+                    正在加载分块…
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* 1. 阅读模式 */}
             {viewMode === 'reading' && (
               <div className="min-h-[300px]">
@@ -432,7 +580,7 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
             {/* 2. 源码 / 纯文本视图 */}
             {viewMode === 'code' && (
               <pre className="p-3 font-mono text-text-secondary text-[11px] leading-relaxed overflow-x-auto whitespace-pre bg-bg-base/60 select-text max-h-[calc(100vh-240px)]">
-                <code>{codeContent}</code>
+                <code>{chunkPreview || codeContent}</code>
               </pre>
             )}
 

@@ -6,6 +6,7 @@ const http = require("http");
 const https = require("https");
 const { spawn } = require("child_process");
 const zlib = require("zlib");
+const crypto = require("crypto");
 const { pathToFileURL } = require("url");
 
 let mainWindow = null;
@@ -14,7 +15,13 @@ let isQuitting = false;
 let pendingUpdateInstallerPath = null;
 
 const MAX_DOCX_SOURCE_BYTES = 8 * 1024 * 1024;
+/** @ 挂载 / 普通抽取默认上限 */
 const MAX_EXTRACTED_TEXT_CHARS = 80000;
+/** 论文分块索引允许抽取更长正文（仍不进入单轮 prompt） */
+const MAX_INDEX_EXTRACTED_TEXT_CHARS = 500000;
+/** 分块目标大小 / 单块工具返回上限 */
+const DOC_CHUNK_TARGET_CHARS = 6000;
+const DOC_CHUNK_MAX_RETURN_CHARS = 12000;
 
 function findZipEocd(buf) {
   const min = Math.max(0, buf.length - (22 + 65535));
@@ -541,7 +548,7 @@ function extractDocxRichDocument(buf) {
 }
 
 /** 从 OOXML .docx 抽出段落纯文本（保留转译后的 LaTeX 公式给大模型） */
-function extractDocxPlainText(buf) {
+function extractDocxPlainText(buf, maxChars = MAX_EXTRACTED_TEXT_CHARS) {
   const xmlBuf = readZipEntry(buf, "word/document.xml");
   if (!xmlBuf) {
     const err = new Error("不是有效的 .docx（缺少 word/document.xml）");
@@ -580,16 +587,17 @@ function extractDocxPlainText(buf) {
     err.code = "EMPTY_DOCX";
     throw err;
   }
-  if (text.length > MAX_EXTRACTED_TEXT_CHARS) {
+  const limit = typeof maxChars === "number" && maxChars > 0 ? maxChars : MAX_EXTRACTED_TEXT_CHARS;
+  if (text.length > limit) {
     return {
-      text: text.slice(0, MAX_EXTRACTED_TEXT_CHARS) + "\n\n[⚠️ 正文过长，已截取前部]",
+      text: text.slice(0, limit) + "\n\n[⚠️ 正文过长，已截取前部]",
       truncated: true
     };
   }
   return { text, truncated: false };
 }
 
-function loadDocxBuffer(buf) {
+function loadDocxBuffer(buf, maxChars = MAX_EXTRACTED_TEXT_CHARS) {
   if (!buf || !Buffer.isBuffer(buf) || buf.length < 4 || buf[0] !== 0x50 || buf[1] !== 0x4b) {
     const err = new Error("不是有效的 .docx");
     err.code = "INVALID_DOCX";
@@ -600,7 +608,7 @@ function loadDocxBuffer(buf) {
     err.code = "FILE_TOO_LARGE";
     throw err;
   }
-  return extractDocxPlainText(buf);
+  return extractDocxPlainText(buf, maxChars);
 }
 
 const MAX_PDF_SOURCE_BYTES = MAX_DOCX_SOURCE_BYTES;
@@ -626,7 +634,7 @@ function loadPdfjs() {
 }
 
 /** 从文字型 PDF 抽出纯文本。扫描件没有文字层时明确失败，不做 OCR。 */
-async function extractPdfPlainText(buf) {
+async function extractPdfPlainText(buf, maxChars = MAX_EXTRACTED_TEXT_CHARS) {
   if (!buf || !Buffer.isBuffer(buf) || buf.length < 5 || buf.slice(0, 5).toString("latin1") !== "%PDF-") {
     const err = new Error("不是有效的 PDF");
     err.code = "INVALID_PDF";
@@ -637,6 +645,7 @@ async function extractPdfPlainText(buf) {
     err.code = "FILE_TOO_LARGE";
     throw err;
   }
+  const limit = typeof maxChars === "number" && maxChars > 0 ? maxChars : MAX_EXTRACTED_TEXT_CHARS;
   const pdfjs = await loadPdfjs();
   const rootDir = pdfjsRootDir();
   const task = pdfjs.getDocument({
@@ -651,7 +660,13 @@ async function extractPdfPlainText(buf) {
   const doc = await task.promise;
   try {
     const pages = [];
+    let totalLen = 0;
+    let truncated = false;
     for (let i = 1; i <= doc.numPages; i++) {
+      if (totalLen >= limit) {
+        truncated = true;
+        break;
+      }
       const page = await doc.getPage(i);
       const content = await page.getTextContent();
       const lines = [];
@@ -667,22 +682,26 @@ async function extractPdfPlainText(buf) {
       }
       const tail = line.replace(/[ \t]+$/g, "").trim();
       if (tail) lines.push(tail);
-      if (lines.length) pages.push(lines.join("\n"));
+      if (lines.length) {
+        const pageText = lines.join("\n");
+        pages.push(pageText);
+        totalLen += pageText.length + 2;
+      }
       if (typeof page.cleanup === "function") page.cleanup();
     }
-    const text = pages.join("\n\n").replace(/\n{3,}/g, "\n\n").trim();
+    let text = pages.join("\n\n").replace(/\n{3,}/g, "\n\n").trim();
     if (!text) {
-      const err = new Error("未能从 PDF 抽出文字。扫描件无法读取，请先做文字识别或另存为文本");
+      const err = new Error(
+        "扫描件无法读取：未能从 PDF 抽出文字。当前文件很可能是扫描件/图片型 PDF（无文字层）。本客户端不做 OCR：请先用 Adobe/ABBYY/系统「OCR PDF」等生成可检索文字版，或另存为 .txt/.md 后再 @ 引用"
+      );
       err.code = "EMPTY_PDF";
       throw err;
     }
-    if (text.length > MAX_EXTRACTED_TEXT_CHARS) {
-      return {
-        text: text.slice(0, MAX_EXTRACTED_TEXT_CHARS) + "\n\n[⚠️ 正文过长，已截取前部]",
-        truncated: true
-      };
+    if (text.length > limit) {
+      text = text.slice(0, limit) + "\n\n[⚠️ 正文过长，已截取前部]";
+      truncated = true;
     }
-    return { text, truncated: false };
+    return { text, truncated };
   } finally {
     await doc.destroy();
   }
@@ -692,6 +711,71 @@ async function extractPdfPlainText(buf) {
 function normalizeFsPath(p) {
   if (!p || typeof p !== "string") return "";
   return path.resolve(p).replace(/\\/g, "/").toLowerCase();
+}
+
+/** 论文/长文分块索引根目录（用户数据目录，不污染工程仓库） */
+function getDocIndexRoot() {
+  return path.join(app.getPath("userData"), "doc-index");
+}
+
+function makeDocIndexId(fullPath, size, mtimeMs) {
+  return crypto
+    .createHash("sha256")
+    .update(`${normalizeFsPath(fullPath)}|${size}|${mtimeMs}`)
+    .digest("hex")
+    .slice(0, 24);
+}
+
+function isSafeDocId(docId) {
+  return typeof docId === "string" && /^[a-f0-9]{16,64}$/i.test(docId.trim());
+}
+
+function isSafeChunkId(chunkId) {
+  return typeof chunkId === "string" && /^[0-9]{1,6}$/.test(String(chunkId).trim());
+}
+
+/** 按标题/固定字数切块；返回含 content 的块列表（落盘后 manifest 不含全文） */
+function chunkDocumentText(fullText, targetChars = DOC_CHUNK_TARGET_CHARS) {
+  const text = String(fullText || "").replace(/\r\n/g, "\n");
+  const lines = text.split("\n");
+  const chunks = [];
+  let buf = [];
+  let bufLen = 0;
+  let currentTitle = "开篇";
+  const target = Math.max(2000, targetChars || DOC_CHUNK_TARGET_CHARS);
+
+  const flush = () => {
+    const content = buf.join("\n").trim();
+    buf = [];
+    bufLen = 0;
+    if (!content) return;
+    const id = String(chunks.length + 1).padStart(4, "0");
+    chunks.push({
+      id,
+      title: String(currentTitle || `第 ${chunks.length + 1} 块`).slice(0, 120),
+      summary: content.slice(0, 160).replace(/\s+/g, " ").trim(),
+      charCount: content.length,
+      content
+    });
+  };
+
+  for (const line of lines) {
+    const heading =
+      line.match(/^#{1,3}\s+(.+)$/) ||
+      line.match(/^第[零一二三四五六七八九十百千0-9]+[章节部篇]\s*(.*)$/) ||
+      line.match(/^(\d+(?:\.\d+){0,3})\s+([A-Za-z\u4e00-\u9fff].{0,80})$/);
+    if (heading && bufLen > target * 0.35) {
+      flush();
+      currentTitle = String(heading[1] || heading[2] || line).trim().slice(0, 120) || currentTitle;
+    } else if (heading && bufLen === 0) {
+      currentTitle = String(heading[1] || heading[2] || line).trim().slice(0, 120) || currentTitle;
+    }
+    buf.push(line);
+    bufLen += line.length + 1;
+    if (bufLen >= target) flush();
+  }
+  flush();
+  return chunks;
 }
 
 /** 逻辑路径是否位于 root 内（mkdir 前先判，避免越权建目录） */
@@ -2719,7 +2803,7 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
       ? userTimeout * 1000
       : Math.min(300000, 120000 + Math.floor(payloadBytes / 1000) * 15000);
 
-    const rollingInactivityMs = 180000; // 数据流入后的空闲静默容忍度 (180s，长推理模型可能长时间只出 thinking)
+    const rollingInactivityMs = 600000; // 数据流入后的空闲静默容忍度 (600s，给长推理/长思考留足静默窗)
 
     // 单次底层网络请求执行体
     const runAttempt = (attemptIndex, forceNewConnection = false) => {
@@ -2890,7 +2974,7 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
             if (!hasReceivedFirstByte) {
               hasReceivedFirstByte = true;
             }
-            setTimer(rollingInactivityMs, "数据流传输静默超时 (180s)，服务端可能已意外断开");
+            setTimer(rollingInactivityMs, "数据流传输静默超时 (600s)，服务端可能已意外断开或长时间无输出");
             responseBody += chunk;
 
             if (stream && res.statusCode >= 200 && res.statusCode < 300) {
@@ -3651,7 +3735,7 @@ ipcMain.handle("read-workspace-file", async (_event, payload) => {
             ok: false,
             code: err.code || "PDF_EXTRACT_FAILED",
             reason: err.message || "抽取 PDF 正文失败",
-            hint: "文字型 PDF 可抽取正文；扫描件请先做文字识别或另存为文本"
+            hint: "文字型 PDF 可抽取正文；扫描件/图片型 PDF 请先 OCR 为可检索文字版，或另存为 .txt/.md"
           };
         }
       }
@@ -3714,6 +3798,302 @@ ipcMain.handle("read-workspace-file", async (_event, payload) => {
         hint: "请确认文件未被其他系统进程独占"
       };
     }
+  });
+
+  // ---------------------------------------------------------------------------
+  // 长文档分块索引：抽取正文 → 切片落盘 → 本轮只返回目录（避免整篇进 prompt）
+  // ---------------------------------------------------------------------------
+  ipcMain.handle("index-workspace-document", async (_event, payload = {}) => {
+    const relativePath = typeof payload === "string" ? payload : payload?.relativePath;
+    if (!relativePath || typeof relativePath !== "string") {
+      return { ok: false, code: "INVALID_ARGUMENT", reason: "文件相对路径不能为空" };
+    }
+
+    const mode = SecuritySandbox.permissionMode;
+    const workspace = SecuritySandbox.activeWorkspaceDir;
+    if (mode === "chat-only") {
+      SecuritySandbox.logAudit("BLOCKED_INDEX_CHAT_ONLY", relativePath);
+      return {
+        ok: false,
+        code: "CHAT_ONLY_BLOCKED",
+        reason: "纯对话模式禁止索引本地文档",
+        hint: "请切换到工作区只读/读写后再引用论文"
+      };
+    }
+
+    let candidatePath = "";
+    if (mode === "workspace-readonly" || mode === "workspace-readwrite") {
+      if (!workspace) {
+        return { ok: false, code: "NO_WORKSPACE", reason: "当前尚未选定工作区工程目录" };
+      }
+      candidatePath = path.resolve(workspace, relativePath);
+      if (!fs.existsSync(candidatePath)) {
+        return { ok: false, code: "NOT_FOUND", reason: `文件不存在: ${relativePath}` };
+      }
+      try {
+        const realWorkspace = fs.realpathSync(workspace);
+        const realTarget = fs.realpathSync(candidatePath);
+        const rel = path.relative(realWorkspace, realTarget);
+        const isContained = !rel.startsWith("..") && !path.isAbsolute(rel);
+        if (!isContained) {
+          SecuritySandbox.logAudit("BLOCKED_SYMLINK_OR_TRAVERSAL", candidatePath);
+          return { ok: false, code: "PERMISSION_DENIED", reason: "目标文件指向工作区外部物理路径" };
+        }
+        candidatePath = realTarget;
+      } catch (err) {
+        return { ok: false, code: "REALPATH_ERROR", reason: err.message };
+      }
+    } else {
+      candidatePath = workspace ? path.resolve(workspace, relativePath) : path.resolve(relativePath);
+      if (!fs.existsSync(candidatePath)) {
+        return { ok: false, code: "NOT_FOUND", reason: `文件不存在: ${relativePath}` };
+      }
+      try {
+        candidatePath = fs.realpathSync(candidatePath);
+      } catch (e) {}
+    }
+
+    try {
+      const stat = fs.statSync(candidatePath);
+      if (stat.isDirectory()) {
+        return { ok: false, code: "IS_DIRECTORY", reason: "不能索引目录" };
+      }
+
+      const docId = makeDocIndexId(candidatePath, stat.size, stat.mtimeMs);
+      const indexDir = path.join(getDocIndexRoot(), docId);
+      const manifestPath = path.join(indexDir, "manifest.json");
+
+      if (fs.existsSync(manifestPath)) {
+        try {
+          const cached = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+          if (cached && cached.docId === docId && Array.isArray(cached.chunks) && cached.chunks.length > 0) {
+            return { ok: true, cached: true, ...cached };
+          }
+        } catch (e) {}
+      }
+
+      let extractedText = "";
+      let sourceTruncated = false;
+      const lower = candidatePath.toLowerCase();
+      if (lower.endsWith(".docx")) {
+        if (stat.size > MAX_DOCX_SOURCE_BYTES) {
+          return { ok: false, code: "FILE_TOO_LARGE", reason: "docx 超过 8MB" };
+        }
+        const extracted = loadDocxBuffer(fs.readFileSync(candidatePath), MAX_INDEX_EXTRACTED_TEXT_CHARS);
+        extractedText = extracted.text;
+        sourceTruncated = !!extracted.truncated;
+      } else if (lower.endsWith(".pdf")) {
+        if (stat.size > MAX_PDF_SOURCE_BYTES) {
+          return { ok: false, code: "FILE_TOO_LARGE", reason: "PDF 超过 8MB" };
+        }
+        const extracted = await extractPdfPlainText(fs.readFileSync(candidatePath), MAX_INDEX_EXTRACTED_TEXT_CHARS);
+        extractedText = extracted.text;
+        sourceTruncated = !!extracted.truncated;
+      } else {
+        const MAX_BYTES = Math.min(stat.size, 2 * 1024 * 1024);
+        const buf = Buffer.alloc(MAX_BYTES);
+        const fd = fs.openSync(candidatePath, "r");
+        fs.readSync(fd, buf, 0, MAX_BYTES, 0);
+        fs.closeSync(fd);
+        for (let i = 0; i < Math.min(512, buf.length); i++) {
+          if (buf[i] === 0) {
+            return { ok: false, code: "BINARY_FILE_REJECTED", reason: "二进制文件无法索引" };
+          }
+        }
+        extractedText = buf.toString("utf8");
+        sourceTruncated = stat.size > MAX_BYTES;
+        if (extractedText.length > MAX_INDEX_EXTRACTED_TEXT_CHARS) {
+          extractedText = extractedText.slice(0, MAX_INDEX_EXTRACTED_TEXT_CHARS);
+          sourceTruncated = true;
+        }
+      }
+
+      const rawChunks = chunkDocumentText(extractedText, DOC_CHUNK_TARGET_CHARS);
+      if (!rawChunks.length) {
+        return { ok: false, code: "EMPTY_DOCUMENT", reason: "未能从文档抽出可分块正文" };
+      }
+
+      fs.mkdirSync(indexDir, { recursive: true });
+      const chunksMeta = [];
+      for (const ch of rawChunks) {
+        const chunkFile = path.join(indexDir, `${ch.id}.txt`);
+        fs.writeFileSync(chunkFile, ch.content, "utf8");
+        chunksMeta.push({
+          id: ch.id,
+          title: ch.title,
+          summary: ch.summary,
+          charCount: ch.charCount
+        });
+      }
+
+      const baseName = path.basename(relativePath);
+      const manifest = {
+        docId,
+        relativePath,
+        title: baseName,
+        chunkCount: chunksMeta.length,
+        totalChars: extractedText.length,
+        sourceTruncated,
+        indexedAt: Date.now(),
+        chunks: chunksMeta
+      };
+      fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
+      SecuritySandbox.logAudit("DOC_INDEXED", `${relativePath} -> ${docId} (${chunksMeta.length} chunks)`);
+      return { ok: true, cached: false, ...manifest };
+    } catch (err) {
+      return {
+        ok: false,
+        code: err.code || "INDEX_FAILED",
+        reason: err.message || "文档索引失败",
+        hint: "文字型 PDF/DOCX/Markdown 可索引；扫描件请先 OCR"
+      };
+    }
+  });
+
+  ipcMain.handle("read-document-chunk", async (_event, payload = {}) => {
+    const docId = String(payload?.docId || "").trim();
+    const chunkIdRaw = String(payload?.chunkId || payload?.id || "").trim();
+    const chunkId = chunkIdRaw.replace(/\D/g, "").padStart(4, "0").slice(-4);
+    if (!isSafeDocId(docId)) {
+      return { ok: false, code: "INVALID_ARGUMENT", reason: "docId 非法" };
+    }
+    if (!chunkId || chunkId === "0000") {
+      return { ok: false, code: "INVALID_ARGUMENT", reason: "chunkId 非法" };
+    }
+
+    const mode = SecuritySandbox.permissionMode;
+    if (mode === "chat-only") {
+      return { ok: false, code: "CHAT_ONLY_BLOCKED", reason: "纯对话模式禁止读取文档分块" };
+    }
+
+    const indexDir = path.join(getDocIndexRoot(), docId);
+    const manifestPath = path.join(indexDir, "manifest.json");
+    const chunkPath = path.join(indexDir, `${chunkId}.txt`);
+    try {
+      const realRoot = fs.realpathSync(getDocIndexRoot());
+      const realChunk = fs.realpathSync(chunkPath);
+      const rel = path.relative(realRoot, realChunk);
+      if (rel.startsWith("..") || path.isAbsolute(rel)) {
+        return { ok: false, code: "PERMISSION_DENIED", reason: "分块路径越权" };
+      }
+    } catch (err) {
+      return { ok: false, code: "NOT_FOUND", reason: `分块不存在: ${docId}/${chunkId}` };
+    }
+
+    if (!fs.existsSync(chunkPath)) {
+      return { ok: false, code: "NOT_FOUND", reason: `分块不存在: ${chunkId}` };
+    }
+
+    let title = chunkId;
+    let relativePath = "";
+    try {
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+      relativePath = manifest.relativePath || "";
+      const meta = (manifest.chunks || []).find((c) => c.id === chunkId);
+      if (meta?.title) title = meta.title;
+    } catch (e) {}
+
+    let content = fs.readFileSync(chunkPath, "utf8");
+    let isTruncated = false;
+    if (content.length > DOC_CHUNK_MAX_RETURN_CHARS) {
+      content = content.slice(0, DOC_CHUNK_MAX_RETURN_CHARS) + "\n\n[⚠️ 单块返回超限，已截取前部]";
+      isTruncated = true;
+    }
+    return {
+      ok: true,
+      docId,
+      chunkId,
+      title,
+      relativePath,
+      content,
+      isTruncated,
+      charCount: content.length
+    };
+  });
+
+  /** 在已索引文档分块中做关键词检索（零依赖，返回命中块摘要） */
+  ipcMain.handle("search-document-chunks", async (_event, payload = {}) => {
+    const docId = String(payload?.docId || "").trim();
+    const query = String(payload?.query || "").trim();
+    const limit = Math.min(20, Math.max(1, Number(payload?.limit) || 8));
+    if (!isSafeDocId(docId)) {
+      return { ok: false, code: "INVALID_ARGUMENT", reason: "docId 非法" };
+    }
+    if (!query || query.length < 1) {
+      return { ok: false, code: "INVALID_ARGUMENT", reason: "query 不能为空" };
+    }
+    if (SecuritySandbox.permissionMode === "chat-only") {
+      return { ok: false, code: "CHAT_ONLY_BLOCKED", reason: "纯对话模式禁止检索文档分块" };
+    }
+
+    const indexDir = path.join(getDocIndexRoot(), docId);
+    const manifestPath = path.join(indexDir, "manifest.json");
+    if (!fs.existsSync(manifestPath)) {
+      return { ok: false, code: "NOT_FOUND", reason: "文档尚未索引或不存在" };
+    }
+
+    let manifest;
+    try {
+      manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    } catch (e) {
+      return { ok: false, code: "MANIFEST_ERROR", reason: "索引清单损坏" };
+    }
+
+    const terms = query
+      .toLowerCase()
+      .split(/[\s,，;；|]+/)
+      .map((t) => t.trim())
+      .filter((t) => t.length >= 1)
+      .slice(0, 8);
+    if (!terms.length) {
+      return { ok: false, code: "INVALID_ARGUMENT", reason: "无效检索词" };
+    }
+
+    const hits = [];
+    for (const meta of manifest.chunks || []) {
+      const cid = String(meta.id || "").padStart(4, "0").slice(-4);
+      const chunkPath = path.join(indexDir, `${cid}.txt`);
+      if (!fs.existsSync(chunkPath)) continue;
+      let body = "";
+      try {
+        body = fs.readFileSync(chunkPath, "utf8");
+      } catch (e) {
+        continue;
+      }
+      const hay = `${meta.title || ""}\n${meta.summary || ""}\n${body}`.toLowerCase();
+      let score = 0;
+      const matched = [];
+      for (const t of terms) {
+        if (!hay.includes(t)) continue;
+        matched.push(t);
+        const re = new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+        const m = body.match(re);
+        score += (m ? m.length : 1) * (meta.title && String(meta.title).toLowerCase().includes(t) ? 3 : 1);
+      }
+      if (!matched.length) continue;
+      const firstTerm = matched[0];
+      const idx = body.toLowerCase().indexOf(firstTerm);
+      const start = Math.max(0, idx - 40);
+      const snippet = body.slice(start, start + 160).replace(/\s+/g, " ").trim();
+      hits.push({
+        chunkId: cid,
+        title: meta.title || cid,
+        score,
+        matchedTerms: matched,
+        snippet: (start > 0 ? "…" : "") + snippet + (start + 160 < body.length ? "…" : ""),
+        charCount: meta.charCount || body.length
+      });
+    }
+
+    hits.sort((a, b) => b.score - a.score);
+    return {
+      ok: true,
+      docId,
+      query,
+      relativePath: manifest.relativePath || "",
+      hitCount: hits.length,
+      hits: hits.slice(0, limit)
+    };
   });
 
   // ---------------------------------------------------------------------------

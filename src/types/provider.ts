@@ -10,6 +10,8 @@ export interface ModelDetailConfig {
   timeoutSeconds?: number; // 该模型专属超时时间限制 (秒，默认自适应)
   temperature?: number;
   maxTokens?: number;
+  /** 思考强度：注入系统提示，并在兼容网关时附带 reasoning_effort */
+  reasoningEffort?: 'low' | 'medium' | 'high';
 }
 
 export interface ProviderPreset {
