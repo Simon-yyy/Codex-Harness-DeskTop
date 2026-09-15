@@ -6,11 +6,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-### 🔌 MCP 连接器（标准大数据 / 豆包）
-- 🌐 **Streamable HTTP MCP 客户端**：配置存 `~/.codex/connectors.json`；API Key 经 `safeStorage` 加密。
-- 🧪 **连接器设置 UI**：顶栏「连接器」→ 填写 URL/Key、测连通、启用、预览 tools。
-- 🧰 **对话工具挂接**：已启用连接器的 tools 以 `mcp__{id}__{name}` 注入 LLM；与写盘工具同环执行。
-- 📡 **预置**：`stsc-data-platform` → `http://47.106.104.48:8089/api/v1/openapi/doubao/mcp`。
+## [v1.2.0] - 2026-09-15
+### 📚 长文档分块 · 长思考静默窗 · 输出/思考可配
+- 📄 **长文档分块索引**：`@` 挂载长 PDF/DOCX/Markdown 时只注入目录；`read_document_chunk` / `search_document_chunks` 按块读与检索。
+- 🔎 **预览栏分块 UI**：右侧面板可浏览分块目录并关键词检索。
+- ⏱️ **流式静默窗 600s**：长推理/长思考不再易被 180s 滑动超时误杀。
+- 🧠 **设置项**：模型级 `maxTokens`、`reasoningEffort`（low/medium/high）可配并持久化。
+- 🗜️ **历史上下文压缩**与空正文/额度用尽自动续写配套。
+- 🔌 **MCP 连接器**：Streamable HTTP、设置 UI、对话 tools 挂接（自 Unreleased 并入）。
 
 ## [v1.1.8] - 2026-09-12
 ### 📄 长文落盘 · Word OOXML · 工具写盘环 · 自定义 Skills
