@@ -28,6 +28,7 @@
 - **退出时更新 (Exit-time Apply)**：支持用户选择「稍后退出时自动升级」，主进程在 `app.on("before-quit")` 生命周期中无声静默更新。
 
 ### 3. 多路由智能下载加速通道 (Resilient Download Pipeline)
+- **版本探测**：优先 `github.com/.../releases/latest` 的 302 Location 解析 tag（不占 `api.github.com` 额度）；API 仅作回退。多仓（`Simon-yyy` 优先于旧镜像仓）取 semver 最高者，避免旧仓 latest 卡住导致「检查不到新版本」。
 - **智能探测与镜像降级**：
   - 路由 1：官方直连 `https://github.com/...`；
   - 路由 2：若 8 秒内连接超时或报 HTTP 错误，自动无缝切换至加速镜像节点（如 `https://ghfast.top/`、`https://mirror.ghproxy.com/`）；

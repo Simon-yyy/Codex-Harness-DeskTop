@@ -374,6 +374,11 @@ runTest("main.js: HTTPS 流式更新与 User-Agent 头完整", () => {
   const mainJs = fs.readFileSync(path.join(rootDir, "main.js"), "utf8");
   assert.ok(mainJs.includes("checkForUpdates"));
   assert.ok(mainJs.includes("User-Agent"));
+  assert.ok(mainJs.includes("discoverLatestRelease"), "必须多仓探测最新版");
+  assert.ok(mainJs.includes("fetchLatestViaRedirect"), "必须优先走 github.com 302 以免 API 限流");
+  assert.ok(mainJs.includes('UPDATE_REPO_OWNERS = ["Simon-yyy"'), "Simon-yyy 必须优先于旧镜像仓");
+  assert.ok(mainJs.includes("compareSemver"), "必须按 semver 取最高版本");
+  assert.ok(mainJs.includes("Codex.Desktop.Setup."), "无资产列表时须能拼装 Setup 下载 URL");
 });
 
 runTest("main.js: NSIS /S 静默就地覆写更新与退出时自动打补丁", () => {
