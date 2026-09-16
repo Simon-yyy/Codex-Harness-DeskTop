@@ -358,6 +358,89 @@ function localWorkspaceToolsAnthropic(canRead: boolean, canWrite: boolean) {
   ];
 }
 
+/** OpenAI Chat Completions 工具 → Responses API tools */
+function openaiToolsToResponses(
+  tools: Array<{ type: 'function'; function: { name: string; description?: string; parameters?: unknown } }>
+) {
+  return tools.map((t) => ({
+    type: 'function' as const,
+    name: t.function.name,
+    description: t.function.description,
+    parameters: t.function.parameters,
+  }));
+}
+
+/** 将 Chat Completions 风格 messages（含 tool）转为 Responses input + instructions */
+function chatMessagesToResponsesPayload(messages: any[]): { instructions?: string; input: any[] } {
+  const systems: string[] = [];
+  const input: any[] = [];
+  for (const m of messages) {
+    if (!m || !m.role) continue;
+    if (m.role === 'system') {
+      const c = typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? '');
+      if (c.trim()) systems.push(c);
+      continue;
+    }
+    if (m.role === 'tool') {
+      input.push({
+        type: 'function_call_output',
+        call_id: m.tool_call_id || m.id || '',
+        output: typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? ''),
+      });
+      continue;
+    }
+    if (m.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length > 0) {
+      if (typeof m.content === 'string' && m.content.trim()) {
+        input.push({ role: 'assistant', content: m.content });
+      }
+      for (const tc of m.tool_calls) {
+        input.push({
+          type: 'function_call',
+          call_id: tc.id || '',
+          name: tc.function?.name || tc.name || '',
+          arguments: tc.function?.arguments || '{}',
+        });
+      }
+      continue;
+    }
+    input.push({
+      role: m.role,
+      content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? ''),
+    });
+  }
+  return {
+    instructions: systems.length ? systems.join('\n\n') : undefined,
+    input,
+  };
+}
+
+function ensureResponsesEndpoint(baseUrl: string): string {
+  const trimmed = baseUrl.replace(/\/+$/, '');
+  if (trimmed.endsWith('/responses')) return trimmed;
+  return `${trimmed}/responses`;
+}
+
+function buildOpenAIResponsesBody(opts: {
+  model: string;
+  messages: any[];
+  maxOutputTokens: number;
+  tools?: ReturnType<typeof openaiToolsToResponses>;
+  reasoningEffort?: string;
+  stream?: boolean;
+}) {
+  const { instructions, input } = chatMessagesToResponsesPayload(opts.messages);
+  return {
+    model: opts.model,
+    input,
+    ...(instructions ? { instructions } : {}),
+    stream: opts.stream !== false,
+    store: false,
+    max_output_tokens: opts.maxOutputTokens,
+    ...(opts.tools && opts.tools.length ? { tools: opts.tools, tool_choice: 'auto' } : {}),
+    ...(opts.reasoningEffort ? { reasoning: { effort: opts.reasoningEffort } } : {}),
+  };
+}
+
 type CodexToolCall = { id?: string; name: string; arguments: string };
 
 /** 安全解析 LLM 返回的响应体：自动兼容标准 JSON、原始 SSE 流式 data: 序列或纯文本，杜绝 Unexpected token 'd' 等异常 */
@@ -385,8 +468,18 @@ function safeParseLlmBody(rawBody: any): any {
         }
         if (item.usage) streamUsage = item.usage;
         const choice = item.choices?.[0];
-        const deltaText = choice?.delta?.content || choice?.delta?.text || choice?.text || '';
-        const deltaThinking = choice?.delta?.reasoning_content || choice?.delta?.reasoning || choice?.delta?.thought || '';
+        let deltaText = choice?.delta?.content || choice?.delta?.text || choice?.text || '';
+        let deltaThinking = choice?.delta?.reasoning_content || choice?.delta?.reasoning || choice?.delta?.thought || '';
+        if (item.type === 'response.output_text.delta' && typeof item.delta === 'string') {
+          deltaText = item.delta;
+        }
+        if (
+          (item.type === 'response.reasoning_summary_text.delta' || item.type === 'response.reasoning_text.delta') &&
+          typeof item.delta === 'string'
+        ) {
+          deltaThinking = item.delta;
+        }
+        if (item.usage || item.response?.usage) streamUsage = item.usage || item.response.usage;
         if (deltaText) accText += deltaText;
         if (deltaThinking) accThinking += deltaThinking;
       } catch {
@@ -1542,7 +1635,7 @@ export const App: React.FC = () => {
                 const indexed = await window.codexDesktop.indexWorkspaceDocument(rel);
                 if (indexed?.ok && indexed.docId && indexed.chunks?.length) {
                   attachedContents.push(formatDocumentIndexCard(indexed));
-                  attachedCount++;
+              attachedCount++;
                   continue;
                 }
               }
@@ -1721,6 +1814,20 @@ export const App: React.FC = () => {
               ? { reasoning_effort: modelCfgForPrompt.reasoningEffort }
               : {}),
           };
+        } else if (effectiveProtocol === 'responses') {
+          endpoint = ensureResponsesEndpoint(endpoint);
+          const oTools = [
+            ...localWorkspaceToolsOpenAI(canUseReadTools, canUseWriteTools),
+            ...mcpToolsOpenAI,
+          ];
+          body = buildOpenAIResponsesBody({
+            model: selectedModel,
+            messages: contextMessages,
+            maxOutputTokens: effectiveMaxTokens,
+            tools: oTools.length ? openaiToolsToResponses(oTools) : undefined,
+            reasoningEffort: modelCfgForPrompt?.reasoningEffort,
+            stream: true,
+          });
         } else {
           // OpenAI 兼容协议 (支持 DeepSeek, GLM, OpenAI 等)
           if (!endpoint.endsWith('/chat/completions')) {
@@ -1989,6 +2096,19 @@ export const App: React.FC = () => {
                     system: systemPrompts || undefined,
                     ...(contATools.length ? { tools: contATools } : {}),
                   };
+                } else if (effectiveProtocol === 'responses') {
+                  contEndpoint = ensureResponsesEndpoint(contEndpoint);
+                  const contOTools = [
+                    ...localWorkspaceToolsOpenAI(canUseReadTools, canUseWriteTools),
+                    ...mcpToolsOpenAI,
+                  ];
+                  contBody = buildOpenAIResponsesBody({
+                    model: selectedModel,
+                    messages: roundMessages,
+                    maxOutputTokens: effectiveMaxTokens,
+                    tools: contOTools.length ? openaiToolsToResponses(contOTools) : undefined,
+                    stream: true,
+                  });
                 } else {
                   if (effectiveProtocol === 'ollama') {
                     if (!contEndpoint.endsWith('/chat/completions') && !contEndpoint.endsWith('/api/chat')) {
@@ -2190,6 +2310,14 @@ export const App: React.FC = () => {
                     messages: roundMessages.filter((m) => m.role !== 'system'),
                     system: systemPrompts || undefined,
                   };
+                } else if (effectiveProtocol === 'responses') {
+                  closeEndpoint = ensureResponsesEndpoint(closeEndpoint);
+                  closeBody = buildOpenAIResponsesBody({
+                    model: selectedModel,
+                    messages: roundMessages,
+                    maxOutputTokens: effectiveMaxTokens,
+                    stream: true,
+                  });
                 } else {
                   if (effectiveProtocol === 'ollama') {
                     if (!closeEndpoint.endsWith('/chat/completions') && !closeEndpoint.endsWith('/api/chat')) {
@@ -2379,6 +2507,14 @@ export const App: React.FC = () => {
                     messages: contMessages,
                     system: systemPrompts || undefined,
                   };
+                } else if (effectiveProtocol === 'responses') {
+                  emptyEndpoint = ensureResponsesEndpoint(emptyEndpoint);
+                  emptyBody = buildOpenAIResponsesBody({
+                    model: selectedModel,
+                    messages: contMessages,
+                    maxOutputTokens: effectiveMaxTokens,
+                    stream: true,
+                  });
                 } else {
                   if (effectiveProtocol === 'ollama') {
                     if (!emptyEndpoint.endsWith('/chat/completions') && !emptyEndpoint.endsWith('/api/chat')) {

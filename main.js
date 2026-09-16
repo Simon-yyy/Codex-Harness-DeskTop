@@ -2863,7 +2863,7 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
           let responseBody = "";
           res.setEncoding("utf8");
 
-          /** 解析单行 SSE data: 载荷（OpenAI 兼容 + Anthropic） */
+          /** 解析单行 SSE data: 载荷（OpenAI Chat / Responses / Anthropic） */
           const ingestSseDataPayload = (dataStr) => {
             if (!dataStr || dataStr === "[DONE]") return;
             try {
@@ -2874,18 +2874,75 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
               }
               const choice = parsed.choices?.[0];
               // content / text；部分网关在非 delta 的 message 上给正文
-              const deltaText =
+              let deltaText =
                 choice?.delta?.content ||
                 choice?.delta?.text ||
                 (choice?.message && !choice?.delta ? (choice.message.content || "") : "") ||
                 "";
-              const deltaThinking =
+              let deltaThinking =
                 choice?.delta?.reasoning_content ||
                 choice?.delta?.reasoning ||
                 (choice?.message && !choice?.delta
                   ? (choice.message.reasoning_content || choice.message.reasoning || "")
                   : "") ||
                 "";
+
+              // OpenAI Responses API 事件
+              if (parsed.type === "response.output_text.delta" && typeof parsed.delta === "string") {
+                deltaText = parsed.delta;
+              }
+              if (
+                (parsed.type === "response.reasoning_summary_text.delta" ||
+                  parsed.type === "response.reasoning_text.delta") &&
+                typeof parsed.delta === "string"
+              ) {
+                deltaThinking = parsed.delta;
+              }
+              if (parsed.type === "response.output_item.added" && parsed.item?.type === "function_call") {
+                const idx =
+                  typeof parsed.output_index === "number"
+                    ? parsed.output_index
+                    : Object.keys(pendingToolCalls).length;
+                pendingToolCalls[idx] = {
+                  id: parsed.item.call_id || parsed.item.id || "",
+                  name: parsed.item.name || "",
+                  arguments: typeof parsed.item.arguments === "string" ? parsed.item.arguments : ""
+                };
+              }
+              if (parsed.type === "response.function_call_arguments.delta") {
+                const idx = typeof parsed.output_index === "number" ? parsed.output_index : 0;
+                if (!pendingToolCalls[idx]) {
+                  pendingToolCalls[idx] = { id: "", name: "", arguments: "" };
+                }
+                if (typeof parsed.delta === "string") pendingToolCalls[idx].arguments += parsed.delta;
+                if (parsed.call_id) pendingToolCalls[idx].id = parsed.call_id;
+              }
+              if (parsed.type === "response.output_item.done" && parsed.item?.type === "function_call") {
+                const idx = typeof parsed.output_index === "number" ? parsed.output_index : 0;
+                if (!pendingToolCalls[idx]) {
+                  pendingToolCalls[idx] = { id: "", name: "", arguments: "" };
+                }
+                if (parsed.item.call_id || parsed.item.id) {
+                  pendingToolCalls[idx].id = parsed.item.call_id || parsed.item.id;
+                }
+                if (parsed.item.name) pendingToolCalls[idx].name = parsed.item.name;
+                if (typeof parsed.item.arguments === "string" && parsed.item.arguments) {
+                  pendingToolCalls[idx].arguments = parsed.item.arguments;
+                }
+              }
+              if (parsed.type === "response.completed" || parsed.type === "response.incomplete") {
+                const respObj = parsed.response || {};
+                if (respObj.usage && typeof respObj.usage === "object") {
+                  lastUsage = { ...(lastUsage || {}), ...respObj.usage };
+                  streamUsage = lastUsage;
+                }
+                if (parsed.type === "response.incomplete" || respObj.status === "incomplete") {
+                  lastFinishReason = "length";
+                } else if (!lastFinishReason) {
+                  lastFinishReason = "stop";
+                }
+              }
+
               if (choice?.finish_reason) lastFinishReason = String(choice.finish_reason);
               if (parsed.type === "message_delta" && parsed.delta?.stop_reason) {
                 lastFinishReason = String(parsed.delta.stop_reason);
@@ -2894,10 +2951,11 @@ ipcMain.handle("save-temp-image", async (_event, base64Data) => {
                 lastFinishReason = String(parsed.stop_reason);
               }
 
-              // 捕获真实 usage（OpenAI 末帧 / Anthropic message_start|message_delta）
+              // 捕获真实 usage（OpenAI 末帧 / Anthropic message_start|message_delta / Responses）
               const usageCandidate =
                 parsed.usage ||
                 parsed.message?.usage ||
+                parsed.response?.usage ||
                 (parsed.type === "message_delta" ? parsed.usage : null) ||
                 (parsed.type === "message_start" ? parsed.message?.usage : null) ||
                 null;

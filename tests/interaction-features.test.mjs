@@ -385,6 +385,21 @@ export function runInteractionFeaturesTests() {
     assert.ok(content.includes("Token 成本"), "ADR 必须详述按需引图防护 Token 爆炸机制");
   });
 
+  test("OpenAI Responses 协议: 下拉选项、请求拼装与 SSE 事件", () => {
+    const providerTs = fs.readFileSync(path.join(rootDir, "src", "types", "provider.ts"), "utf8");
+    const settings = fs.readFileSync(path.join(rootDir, "src", "components", "Modals", "SettingsModal.tsx"), "utf8");
+    const app = fs.readFileSync(path.join(rootDir, "src", "App.tsx"), "utf8");
+    const mainJs = fs.readFileSync(path.join(rootDir, "main.js"), "utf8");
+    assert.ok(providerTs.includes("'responses'"), "ProviderProtocol 须含 responses");
+    assert.ok(settings.includes('value="responses"'), "设置下拉须含 Responses 选项");
+    assert.ok(settings.includes("/v1/responses"), "设置文案须标明 /v1/responses");
+    assert.ok(app.includes("buildOpenAIResponsesBody"), "App 须拼装 Responses 请求体");
+    assert.ok(app.includes("ensureResponsesEndpoint"), "App 须拼接 /responses 端点");
+    assert.ok(app.includes("openaiToolsToResponses"), "App 须转换 Responses tools");
+    assert.ok(mainJs.includes("response.output_text.delta"), "main 须解析 Responses 文本增量");
+    assert.ok(mainJs.includes("response.function_call_arguments.delta"), "main 须解析 Responses 工具参数增量");
+  });
+
   test("LLM 流式管道鲁棒防护: safeParseLlmBody 与 streamError 隔离 (杜绝 Unexpected token 'd')", () => {
     const appTsx = fs.readFileSync(path.join(rootDir, "src", "App.tsx"), "utf8");
     const mainJs = fs.readFileSync(path.join(rootDir, "main.js"), "utf8");

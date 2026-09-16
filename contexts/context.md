@@ -11,7 +11,7 @@
 - **Session (会话)**：独立对话单元，包含多轮历史消息、关联模型配置与专属指令排队队列 (`queuedInstructions`)，支持持久化到 `localStorage`。
 - **Tab Queueing (指令流水线)**：官方前沿交互特性。当 Agent 正处于思考/生成回复期间，用户新输入的指令进入排队队列，当前任务完成后自动顺延触发。
 - **Skills (技能生态)**：43 项预置工程技能（35 项工业级 + 8 项 Loop Engineering），启动时增量同步至 `~/.codex/skills/`。用户技能在 `~/.codex/user-skills/`，与内置热同步隔离，侧栏可导入、新建、编辑、删除。
-- **Provider Presets (提供方预设)**：内置 OpenAI (旗舰 `gpt-5.6-sol`, `gpt-5.4-mini`)、Anthropic (`claude-3-7-sonnet` 混合思考)、DeepSeek (`deepseek-reasoner`) 与本地 Ollama 协议适配。
+- **Provider Presets (提供方预设)**：内置 OpenAI (旗舰 `gpt-5.6-sol`, `gpt-5.4-mini`)、Anthropic (`claude-3-7-sonnet` 混合思考)、DeepSeek (`deepseek-reasoner`) 与本地 Ollama；协议可选 Chat Completions / **Responses (`/v1/responses`)** / Anthropic Messages / Ollama。
 - **Themes (主题引擎)**：4 款 VS Code 经典极客美学高对比度配色（`escook Dark`, `Dark Soft`, `Light`, `Light Soft`），支持快捷键与菜单毫秒级热切换。
 - **Workspace Grouping (项目归类与联动)**：对话按真实工程物理目录收纳，切换对话自动联动切换当前全局工作区、主进程环境与代码树，使用 `normalizeFsPath` 保证跨平台一致性。
 - **Streaming Telemetry (真实流式遥测)**：实时监控 TTFT (首 Token 耗时)、实时吐字速率 (tok/s)、真实输入/输出 Token 统计与上下文缓存命中率 (Cache Hit %)，消除任何静态假数据。

@@ -1,4 +1,4 @@
-export type ProviderProtocol = 'openai' | 'anthropic' | 'ollama';
+export type ProviderProtocol = 'openai' | 'anthropic' | 'ollama' | 'responses';
 
 export interface ModelDetailConfig {
   id: string; // 唯一标识

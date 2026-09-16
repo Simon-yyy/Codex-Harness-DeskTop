@@ -249,6 +249,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           messages: [{ role: 'user', content: 'ping' }],
           max_tokens: 5
         };
+      } else if (effectiveProtocol === 'responses') {
+        if (!effectiveBaseUrl.endsWith('/responses')) {
+          effectiveBaseUrl += '/responses';
+        }
+        body = {
+          model: modelToTest,
+          input: 'ping',
+          max_output_tokens: 5,
+          store: false
+        };
       } else {
         // OpenAI 兼容协议
         if (!effectiveBaseUrl.endsWith('/chat/completions')) {
@@ -458,6 +468,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         className="w-full px-3 py-1.5 bg-bg-base border border-border rounded-lg text-xs font-medium text-text-primary focus:outline-none focus:border-accent"
                       >
                         <option value="openai">OpenAI 兼容协议 (Chat Completions: /v1/chat/completions)</option>
+                        <option value="responses">OpenAI Responses 协议 (/v1/responses)</option>
                         <option value="anthropic">Anthropic Messages 协议 (/v1/messages)</option>
                         <option value="ollama">Ollama 本地协议 (http://127.0.0.1:11434)</option>
                       </select>
@@ -595,6 +606,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                               ? 'https://api.anthropic.com/v1'
                               : currentProvider.protocol === 'ollama'
                               ? 'http://127.0.0.1:11434'
+                              : currentProvider.protocol === 'responses'
+                              ? 'https://api.openai.com/v1'
                               : 'https://api.openai.com/v1'
                           }
                           className="w-full px-3 py-1.5 bg-bg-base border border-border rounded-lg text-xs font-mono text-text-primary focus:outline-none focus:border-accent"
